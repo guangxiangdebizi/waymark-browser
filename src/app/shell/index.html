@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: http: https:">
+<title>Waymark</title>
+<link rel="stylesheet" href="shell.css">
+</head>
+<body>
+<header class="strip" id="strip">
+  <div class="brand" title="Waymark"><span class="logo">W</span></div>
+  <div class="tabs" id="tabs" role="tablist"></div>
+  <button class="icon-btn new-tab" id="new-tab" title="新标签页 (Ctrl+T)"><svg viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></svg></button>
+  <div class="strip-fill"></div>
+</header>
+
+<nav class="toolbar">
+  <button class="icon-btn" id="back" title="后退 (Alt+←)"><svg viewBox="0 0 16 16"><path d="M10 3 5 8l5 5"/></svg></button>
+  <button class="icon-btn" id="forward" title="前进 (Alt+→)"><svg viewBox="0 0 16 16"><path d="m6 3 5 5-5 5"/></svg></button>
+  <button class="icon-btn" id="reload" title="重新加载 (Ctrl+R)">
+    <svg class="i-reload" viewBox="0 0 16 16"><path d="M13 8a5 5 0 1 1-1.5-3.55M13 2.5v3h-3"/></svg>
+    <svg class="i-stop" viewBox="0 0 16 16"><path d="m4 4 8 8M12 4l-8 8"/></svg>
+  </button>
+  <button class="icon-btn" id="home" title="主页"><svg viewBox="0 0 16 16"><path d="M2.5 7.5 8 3l5.5 4.5M4 6.5V13h3v-3h2v3h3V6.5"/></svg></button>
+  <form class="omnibox" id="omnibox" autocomplete="off">
+    <span class="site" id="site-icon" title="">
+      <svg class="i-lock" viewBox="0 0 16 16"><rect x="3.5" y="7" width="9" height="6.5" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/></svg>
+      <svg class="i-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4"/><path d="m10 10 3.5 3.5"/></svg>
+      <svg class="i-info" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5"/><path d="M8 7.5V11M8 5.2v.1"/></svg>
+    </span>
+    <input id="address" placeholder="搜索或输入网址" spellcheck="false">
+    <span class="agent-tag" id="agent-tag" title="此标签页由 AI 打开">AI 标签页</span>
+    <button type="button" class="zoom-tag" id="zoom-tag" title="点击恢复 100%">100%</button>
+  </form>
+  <button class="ai-pill" id="ai-pill" title="AI 自动化状态，点击打开面板">
+    <span class="dot"></span><span id="ai-pill-text">连接中…</span>
+  </button>
+  <button class="icon-btn" id="panel-toggle" title="AI 面板 (Ctrl+Shift+B)"><svg viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="2"/><path d="M10 3v10"/></svg></button>
+</nav>
+
+<aside class="panel" id="panel">
+  <div class="panel-head">
+    <div class="seg" role="tablist" id="panel-tabs">
+      <button data-view="activity" class="on">活动</button>
+      <button data-view="challenges">验证 <span class="count" id="challenge-count" hidden>0</span></button>
+      <button data-view="settings">设置</button>
+    </div>
+  </div>
+
+  <section class="view on" data-view="activity">
+    <div class="control-card" id="control-card">
+      <div class="control-text">
+        <strong id="control-title">AI 可以操作浏览器</strong>
+        <span id="control-sub">会话 default</span>
+      </div>
+      <button class="btn" id="pause-btn">暂停 AI</button>
+    </div>
+    <div class="filters">
+      <div class="chips" id="filter-chips">
+        <button data-filter="all" class="on">全部</button>
+        <button data-filter="act">动作</button>
+        <button data-filter="failure">失败</button>
+      </div>
+      <label class="mini-check"><input type="checkbox" id="show-ambient"> 鼠标游走</label>
+    </div>
+    <div class="timeline" id="timeline"></div>
+  </section>
+
+  <section class="view" data-view="challenges">
+    <p class="hint">遇到人机验证时，浏览器按 <b>本地 ddddocr → AI 处理 → 人工接管</b> 的顺序处理。需要你出手时这里会亮起。</p>
+    <div id="challenges"></div>
+  </section>
+
+  <section class="view" data-view="settings">
+    <div class="group">
+      <h4>自动化优先</h4>
+      <div class="row">
+        <div><b>自主鼠标游走</b><small>页面空闲时指针自己移动，只悬停不点击</small></div>
+        <label class="switch"><input type="checkbox" id="ambient-switch"><span></span></label>
+      </div>
+    </div>
+    <div class="group">
+      <h4>可插拔能力</h4>
+      <small class="hint-line">自动化层的每个环节都可以替换成你自己的 JS 或 Python 实现（见 docs/plugins.md），这里随时切换，溯源记录会写明用的是哪个。</small>
+      <div id="slots"></div>
+    </div>
+    <div class="group">
+      <h4>让 AI 连接这个浏览器</h4>
+      <div class="copy-line"><code id="mcp-url">http://127.0.0.1:9510/mcp</code><button class="btn ghost" data-copy="mcp">复制</button></div>
+      <small class="muted">Claude Code</small>
+      <div class="copy-line"><code id="cmd-claude"></code><button class="btn ghost" data-copy="claude">复制</button></div>
+      <small class="muted">Codex（~/.codex/config.toml）</small>
+      <div class="copy-line"><code id="cmd-codex"></code><button class="btn ghost" data-copy="codex">复制</button></div>
+    </div>
+    <div class="group">
+      <h4>溯源</h4>
+      <button class="btn ghost wide" id="open-audit">在新标签页打开完整溯源记录</button>
+    </div>
+    <div class="group">
+      <h4>快捷键</h4>
+      <dl class="keys">
+        <dt>Ctrl+T / Ctrl+W</dt><dd>新建 / 关闭标签页</dd>
+        <dt>Ctrl+L</dt><dd>定位地址栏</dd>
+        <dt>Ctrl+Tab</dt><dd>切换标签页</dd>
+        <dt>Alt+← / Alt+→</dt><dd>后退 / 前进</dd>
+        <dt>Ctrl+R / F5</dt><dd>刷新</dd>
+        <dt>Ctrl + / - / 0</dt><dd>缩放</dd>
+        <dt>Ctrl+Shift+B</dt><dd>显示 / 隐藏 AI 面板</dd>
+        <dt>F12</dt><dd>开发者工具</dd>
+      </dl>
+    </div>
+  </section>
+
+  <footer class="panel-foot"><span class="dot" id="mcp-dot"></span><span id="mcp-state">MCP 连接中…</span></footer>
+</aside>
+
+<div class="toast" id="toast" hidden></div>
+<script src="labels.js"></script>
+<script src="renderer.js"></script>
+</body>
+</html>

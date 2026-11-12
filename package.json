@@ -1,0 +1,56 @@
+{
+  "name": "waymark-browser",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Waymark: an open-source desktop browser for AI agents and humans to share - MCP control, isolated input, local CAPTCHA triage and a traceable action ledger.",
+  "license": "MIT",
+  "homepage": "https://github.com/guangxiangdebizi/waymark-browser",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/guangxiangdebizi/waymark-browser.git"
+  },
+  "bugs": {
+    "url": "https://github.com/guangxiangdebizi/waymark-browser/issues"
+  },
+  "keywords": [
+    "browser",
+    "ai-agent",
+    "mcp",
+    "electron",
+    "playwright",
+    "automation",
+    "audit",
+    "captcha",
+    "ddddocr"
+  ],
+  "type": "module",
+  "main": "dist/app/electron-main.js",
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsc -p tsconfig.json && node scripts/copy-app-assets.mjs",
+    "start": "node dist/index.js",
+    "test": "tsx --test tests/*.test.ts",
+    "test:e2e": "tsx tests/e2e.ts",
+    "test:ocr": "node scripts/run-ocr-tests.mjs",
+    "app": "npm run build && node dist/app/launcher.js",
+    "test:electron": "tsx tests/electron_mcp_e2e.ts"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "clipboardy": "^5.3.2",
+    "express": "^5.3.0",
+    "playwright-core": "^1.65.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^25.5.0",
+    "electron": "^45.3.0",
+    "electron-builder": "^26.18.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}

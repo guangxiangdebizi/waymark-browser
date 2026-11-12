@@ -1,0 +1,45 @@
+{
+  "settingsFile": "./data/electron-settings.json",
+  "server": {
+    "host": "127.0.0.1",
+    "port": 9510
+  },
+  "browser": {
+    "executablePath": "auto",
+    "userDataDir": "./data/electron-profile",
+    "headless": false,
+    "settleMs": 250,
+    "readLimit": 30000,
+    "systemPasteSettleMs": 150,
+    "mouse": {
+      "minSteps": 8,
+      "maxSteps": 20,
+      "minDelayMs": 4,
+      "maxDelayMs": 14
+    },
+    "ambientMouse": {
+      "enabled": true,
+      "minPauseMs": 1200,
+      "maxPauseMs": 3500,
+      "marginPx": 40
+    }
+  },
+  "capabilities": {
+    "pointer": "action.pointer.bezier",
+    "challengeOcr": "challenge.ocr.ddddocr",
+    "clipboard": "action.clipboard.virtual"
+  },
+  "audit": {
+    "directory": "./data/electron-audit",
+    "captureScreenshots": false
+  },
+  "challenge": {
+    "pythonCommand": "./.venv/Scripts/python.exe",
+    "pythonFallback": "python",
+    "timeoutMs": 15000,
+    "maxImageBytes": 5242880,
+    "maxOcrAttempts": 1,
+    "maxAiAttempts": 2,
+    "autoSubmit": true
+  }
+}

@@ -1,0 +1,45 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "waymark-browser"
+dynamic = ["version"]
+description = "CLI and stdio MCP bridge for Waymark, the open-source desktop browser shared by AI agents and humans."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.9"
+authors = [{ name = "guangxiangdebizi" }]
+keywords = ["browser", "ai-agent", "mcp", "automation", "electron", "playwright", "captcha", "audit"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Topic :: Internet :: WWW/HTTP :: Browsers",
+  "Topic :: Software Development :: Testing",
+]
+dependencies = []
+
+[project.optional-dependencies]
+ocr = ["ddddocr>=1.5"]
+
+[project.scripts]
+waymark = "waymark_browser.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/guangxiangdebizi/waymark-browser"
+Source = "https://github.com/guangxiangdebizi/waymark-browser"
+Issues = "https://github.com/guangxiangdebizi/waymark-browser/issues"
+
+[tool.hatch.version]
+path = "src/waymark_browser/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/waymark_browser"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/waymark_browser", "tests", "README.md", "LICENSE"]

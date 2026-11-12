@@ -1,0 +1,12 @@
+node_modules/
+dist/
+data/
+.venv/
+.research/
+*.log
+.DS_Store
+cli/dist/
+cli/build/
+*.egg-info/
+__pycache__/
+执行记录.md
