@@ -3,11 +3,13 @@ import { randomUUID } from 'node:crypto';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadConfig, fromRoot } from '../config.js';
+import { createTranslator } from '../i18n.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 process.env.WAYMARK_CONFIG ??= process.env.AGENT_BROWSER_CONFIG ?? './config/electron.json';
 const config = loadConfig();
+const t = (key: string, values?: unknown[]) => createTranslator(config.uiLanguage).t(key, values);
 app.setPath('userData', fromRoot(config.browser.userDataDir));
 
 const API = `http://${config.server.host}:${config.server.port}`;
@@ -37,7 +39,7 @@ function summary(id: number, state: TabState) {
   const url = contents.getURL();
   return {
     id, url, owner: state.owner, favicon: state.favicon, loading: state.loading, active: id === activeId,
-    title: !url || url.startsWith('about:blank') ? '新标签页' : contents.getTitle() || (url.startsWith(HOME_URL) ? '新标签页' : url),
+    title: !url || url.startsWith('about:blank') ? t("新标签页") : contents.getTitle() || (url.startsWith(HOME_URL) ? t("新标签页") : url),
     canGoBack: contents.navigationHistory.canGoBack(), canGoForward: contents.navigationHistory.canGoForward(),
     isHome: url.startsWith(HOME_URL), zoom: Math.round(contents.getZoomFactor() * 100)
   };
@@ -180,33 +182,33 @@ function pageMenu(id: number, contents: WebContents, params: Electron.ContextMen
   const items: MenuItemConstructorOptions[] = [];
   if (params.linkURL) {
     items.push(
-      { label: '在新标签页中打开链接', click: () => createTab(randomUUID(), params.linkURL, 'user', true) },
-      { label: '复制链接地址', click: () => clipboard.writeText(params.linkURL) },
+      { label: t("在新标签页中打开链接"), click: () => createTab(randomUUID(), params.linkURL, 'user', true) },
+      { label: t("复制链接地址"), click: () => clipboard.writeText(params.linkURL) },
       { type: 'separator' }
     );
   }
   if (params.mediaType === 'image' && params.srcURL) {
     items.push(
-      { label: '在新标签页中打开图片', click: () => createTab(randomUUID(), params.srcURL, 'user', true) },
-      { label: '复制图片地址', click: () => clipboard.writeText(params.srcURL) },
+      { label: t("在新标签页中打开图片"), click: () => createTab(randomUUID(), params.srcURL, 'user', true) },
+      { label: t("复制图片地址"), click: () => clipboard.writeText(params.srcURL) },
       { type: 'separator' }
     );
   }
   if (params.isEditable) {
-    items.push({ label: '剪切', role: 'cut', enabled: params.editFlags.canCut }, { label: '复制', role: 'copy', enabled: params.editFlags.canCopy },
-      { label: '粘贴', role: 'paste', enabled: params.editFlags.canPaste }, { label: '全选', role: 'selectAll' }, { type: 'separator' });
+    items.push({ label: t("剪切"), role: 'cut', enabled: params.editFlags.canCut }, { label: t("复制"), role: 'copy', enabled: params.editFlags.canCopy },
+      { label: t("粘贴"), role: 'paste', enabled: params.editFlags.canPaste }, { label: t("全选"), role: 'selectAll' }, { type: 'separator' });
   } else if (params.selectionText) {
     const text = params.selectionText.trim().slice(0, 40);
-    items.push({ label: '复制', role: 'copy' },
-      { label: `用必应搜索“${text}${params.selectionText.length > 40 ? '…' : ''}”`, click: () => createTab(randomUUID(), normalize(params.selectionText.replace(/\s+/g, ' ').trim()), 'user') },
+    items.push({ label: t("复制"), role: 'copy' },
+      { label: t("用必应搜索“{0}{1}”", [text, params.selectionText.length > 40 ? '…' : '']), click: () => createTab(randomUUID(), normalize(params.selectionText.replace(/\s+/g, ' ').trim()), 'user') },
       { type: 'separator' });
   }
   items.push(
-    { label: '后退', enabled: contents.navigationHistory.canGoBack(), click: () => history(id, 'back') },
-    { label: '前进', enabled: contents.navigationHistory.canGoForward(), click: () => history(id, 'forward') },
-    { label: '重新加载', click: () => history(id, 'reload') },
+    { label: t("后退"), enabled: contents.navigationHistory.canGoBack(), click: () => history(id, 'back') },
+    { label: t("前进"), enabled: contents.navigationHistory.canGoForward(), click: () => history(id, 'forward') },
+    { label: t("重新加载"), click: () => history(id, 'reload') },
     { type: 'separator' },
-    { label: '检查元素', click: () => contents.inspectElement(params.x, params.y) }
+    { label: t("检查元素"), click: () => contents.inspectElement(params.x, params.y) }
   );
   Menu.buildFromTemplate(items).popup({ window: shell });
 }
@@ -215,13 +217,13 @@ function tabMenu(id: number): void {
   const state = tabs.get(id);
   if (!state) return;
   Menu.buildFromTemplate([
-    { label: '新标签页', click: () => createTab(randomUUID(), HOME_URL, 'user') },
-    { label: '重新加载', click: () => history(id, 'reload') },
-    { label: '复制网址', click: () => clipboard.writeText(state.view.webContents.getURL()) },
-    { label: '复制此标签页', click: () => createTab(randomUUID(), state.view.webContents.getURL(), 'user') },
+    { label: t("新标签页"), click: () => createTab(randomUUID(), HOME_URL, 'user') },
+    { label: t("重新加载"), click: () => history(id, 'reload') },
+    { label: t("复制网址"), click: () => clipboard.writeText(state.view.webContents.getURL()) },
+    { label: t("复制此标签页"), click: () => createTab(randomUUID(), state.view.webContents.getURL(), 'user') },
     { type: 'separator' },
-    { label: '关闭标签页', click: () => close(id) },
-    { label: '关闭其他标签页', enabled: tabs.size > 1, click: () => [...tabs.keys()].filter(other => other !== id).forEach(close) }
+    { label: t("关闭标签页"), click: () => close(id) },
+    { label: t("关闭其他标签页"), enabled: tabs.size > 1, click: () => [...tabs.keys()].filter(other => other !== id).forEach(close) }
   ]).popup({ window: shell });
 }
 
@@ -230,6 +232,15 @@ async function api(method: 'GET' | 'POST', path: string, body?: unknown): Promis
   const response = await fetch(API + path, { method, headers: body === undefined ? undefined : { 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(8000) });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error((data as { error?: string }).error || `HTTP ${response.status}`);
+  const language = (data as { uiLanguage?: string }).uiLanguage;
+  if (language && language !== config.uiLanguage) {
+    config.uiLanguage = language;
+    for (const { view } of tabs.values()) {
+      const url = view.webContents.getURL();
+      if (url === HOME_URL || url === `${API}/audit`) view.webContents.reload();
+    }
+    publish();
+  }
   return data;
 }
 
@@ -252,7 +263,7 @@ app.whenReady().then(() => {
   shell.on('maximize', layout);
   shell.on('unmaximize', layout);
   shell.once('ready-to-show', () => { if (shell.isMinimized()) shell.restore(); shell.show(); shell.focus(); layout(); });
-  void shell.loadFile(join(__dirname, 'shell', 'index.html'), { query: { 'agent-shell': '1' } });
+  void shell.loadFile(join(__dirname, 'shell', 'index.html'), { query: { 'agent-shell': '1', lang: config.uiLanguage || 'en' } });
   shell.webContents.on('did-finish-load', publish);
   shell.webContents.on('before-input-event', (event, input) => { if (shortcut(input)) event.preventDefault(); });
 });

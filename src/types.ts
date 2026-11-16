@@ -1,6 +1,7 @@
 import type { PluginEntry } from './capabilities/plugins.js';
 
 export interface AppConfig {
+  uiLanguage?: string;
   settingsFile: string;
   server: { host: string; port: number };
   browser: {

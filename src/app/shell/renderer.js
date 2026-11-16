@@ -1,4 +1,6 @@
 (() => {
+  const I = window.WaymarkI18n;
+  const { t, th } = I;
   const shell = window.agentShell;
   const $ = selector => document.querySelector(selector);
   const store = {
@@ -25,9 +27,10 @@
         : tab.isHome ? '<span class="logo" style="width:16px;height:16px;font-size:9px;border-radius:5px">W</span>'
         : tab.favicon ? `<img src="${esc(tab.favicon)}" alt="" draggable="false">`
         : `<span class="globe">${icon('globe')}</span>`;
-      return `<div class="tab${tab.active ? ' active' : ''}${width < 96 ? ' narrow' : ''}" role="tab" draggable="true" data-id="${tab.id}" title="${esc(tab.title)}\n${esc(tab.url)}" style="flex-basis:${width}px">
+      return `<div class="tab${tab.active ? ' active' : ''}${width < 96 ? ' narrow' : ''}" role="tab" draggable="true" data-id="${tab.id}" title="${esc(tab.title)}
+${esc(tab.url)}" style="flex-basis:${width}px">
         <span class="fav">${fav}</span><span class="title">${esc(tab.title)}</span>${tab.owner === 'agent' ? '<span class="badge">AI</span>' : ''}
-        <button class="x" data-close="${tab.id}" title="关闭标签页 (Ctrl+W)">${icon('close')}</button></div>`;
+        <button class="x" data-close="${tab.id}" title="${th("关闭标签页 (Ctrl+W)")}">${icon('close')}</button></div>`;
     }).join('');
     box.querySelectorAll('.fav img').forEach(img => img.addEventListener('error', () => { img.replaceWith(Object.assign(document.createElement('span'), { className: 'globe', innerHTML: icon('globe') })); }, { once: true }));
   }
@@ -37,7 +40,7 @@
     $('#back').disabled = !tab?.canGoBack;
     $('#forward').disabled = !tab?.canGoForward;
     $('#reload').classList.toggle('loading', Boolean(tab?.loading));
-    $('#reload').title = tab?.loading ? '停止加载' : '重新加载 (Ctrl+R)';
+    $('#reload').title = tab?.loading ? t("停止加载") : t("重新加载 (Ctrl+R)");
     $('#agent-tag').hidden = tab?.owner !== 'agent';
     $('#zoom-tag').hidden = !tab || tab.zoom === 100;
     $('#zoom-tag').textContent = (tab?.zoom ?? 100) + '%';
@@ -53,7 +56,7 @@
     if (state.editing || !tab || tab.isHome || !tab.url || tab.url.startsWith('about:')) { site.dataset.kind = 'search'; site.title = ''; return; }
     const secure = tab.url.startsWith('https://');
     site.dataset.kind = secure ? 'secure' : 'info';
-    site.title = secure ? '连接是安全的' : '此连接不是 HTTPS';
+    site.title = secure ? t("连接是安全的") : t("此连接不是 HTTPS");
   }
 
   $('#tabs').addEventListener('mousedown', event => {
@@ -171,6 +174,12 @@
   async function loadStatus() {
     try {
       state.status = await shell.apiGet('/api/status');
+      if (state.status.uiLanguage && state.status.uiLanguage !== I.locale) {
+        const url = new URL(location.href);
+        url.searchParams.set('lang', state.status.uiLanguage);
+        location.replace(url.href);
+        return;
+      }
       state.challenges = state.status.challenges || [];
       state.online = true;
     } catch {
@@ -183,12 +192,12 @@
     const pill = $('#ai-pill');
     const status = state.status;
     pill.className = 'ai-pill';
-    let text = 'MCP 未连接';
+    let text = t("MCP 未连接");
     if (!state.online || !status) pill.classList.add('alert');
-    else if (needsHuman().some(job => job.status === 'human_required')) { pill.classList.add('alert'); text = '需要你处理验证'; }
-    else if (status.paused) { pill.classList.add('paused'); text = 'AI 已暂停'; }
-    else if (status.busy > 0) { pill.classList.add('busy'); text = 'AI 正在操作'; }
-    else { pill.classList.add('ok'); text = status.lastActionAt && Date.now() - Date.parse(status.lastActionAt) < 60000 ? 'AI 刚刚操作过' : 'AI 就绪'; }
+    else if (needsHuman().some(job => job.status === 'human_required')) { pill.classList.add('alert'); text = t("需要你处理验证"); }
+    else if (status.paused) { pill.classList.add('paused'); text = t("AI 已暂停"); }
+    else if (status.busy > 0) { pill.classList.add('busy'); text = t("AI 正在操作"); }
+    else { pill.classList.add('ok'); text = status.lastActionAt && Date.now() - Date.parse(status.lastActionAt) < 60000 ? t("AI 刚刚操作过") : t("AI 就绪"); }
     $('#ai-pill-text').textContent = text;
 
     const pending = needsHuman().length;
@@ -196,15 +205,15 @@
     $('#challenge-count').textContent = String(pending);
 
     $('#mcp-dot').className = 'dot ' + (state.online ? 'ok' : 'bad');
-    $('#mcp-state').textContent = state.online ? `MCP 在线 · ${state.info?.mcp ?? ''}` : 'MCP 未连接（App 内核未启动或已退出）';
+    $('#mcp-state').textContent = state.online ? t("MCP 在线 · {0}", [state.info?.mcp ?? '']) : t("MCP 未连接（App 内核未启动或已退出）");
     if (!status) return;
 
     const card = $('#control-card');
     card.classList.toggle('paused', Boolean(status.paused));
-    $('#control-title').textContent = status.paused ? 'AI 已暂停，浏览器由你控制' : status.busy ? 'AI 正在操作浏览器' : 'AI 可以操作浏览器';
-    $('#control-sub').textContent = `会话 ${status.session} · ${status.tabs} 个标签页 · 今日 ${status.todayActions} 次动作`;
+    $('#control-title').textContent = status.paused ? t("AI 已暂停，浏览器由你控制") : status.busy ? t("AI 正在操作浏览器") : t("AI 可以操作浏览器");
+    $('#control-sub').textContent = t("会话 {0} · {1} 个标签页 · 今日 {2} 次动作", [status.session, status.tabs, status.todayActions]);
     const pause = $('#pause-btn');
-    pause.textContent = status.paused ? '恢复 AI' : '暂停 AI';
+    pause.textContent = status.paused ? t("恢复 AI") : t("暂停 AI");
     pause.className = status.paused ? 'btn primary' : 'btn';
 
     if (document.activeElement !== $('#ambient-switch')) $('#ambient-switch').checked = Boolean(status.ambientMouse?.enabled);
@@ -213,7 +222,7 @@
       if (!data) return '';
       const items = data.providers.map(provider => {
         const friendly = BUILTIN_NAMES[provider.id];
-        return `<button class="model${provider.id === data.active ? ' on' : ''}" data-slot="${slot}" data-provider="${esc(provider.id)}"><span class="radio"></span><div><b>${esc(friendly || provider.id)} <small>v${esc(provider.version)}</small></b><span>${esc(friendly ? provider.id : provider.description)}${provider.runtime === 'external-process' ? ' · 外部进程' : ''}</span></div></button>`;
+        return `<button class="model${provider.id === data.active ? ' on' : ''}" data-slot="${slot}" data-provider="${esc(provider.id)}"><span class="radio"></span><div><b>${esc(friendly || provider.id)} <small>v${esc(provider.version)}</small></b><span>${esc(friendly ? provider.id : provider.description)}${provider.runtime === 'external-process' ? t(" · 外部进程") : ''}</span></div></button>`;
       }).join('');
       return `<span class="slot-title">${title} <small class="muted">${hint}</small></span><div class="models">${items}</div>`;
     }).join('') : '';
@@ -222,25 +231,31 @@
 
   async function post(path, body, message) {
     try { await shell.apiPost(path, body); if (message) toast(message); }
-    catch (error) { toast('操作失败：' + (error?.message || error)); }
+    catch (error) { toast(t("操作失败：") + (error?.message || error)); }
     await loadStatus();
     if (state.view !== 'settings') refreshPanel();
   }
-  $('#pause-btn').addEventListener('click', () => post('/api/control', { paused: !state.status?.paused }, state.status?.paused ? '已恢复 AI 自动化' : '已暂停：AI 的所有操作会被拒绝'));
-  const SLOT_ORDER = [['pointer', '鼠标轨迹', '点击 / 悬停 / 游走'], ['ocr', '验证码识别', '本地优先，失败才交给 AI'], ['clipboard', '剪贴板', 'AI 复制粘贴走哪里']];
+  $('#pause-btn').addEventListener('click', () => post('/api/control', { paused: !state.status?.paused }, state.status?.paused ? t("已恢复 AI 自动化") : t("已暂停：AI 的所有操作会被拒绝")));
+  const SLOT_ORDER = [['pointer', t("鼠标轨迹"), t("点击 / 悬停 / 游走")], ['ocr', t("验证码识别"), t("本地优先，失败才交给 AI")], ['clipboard', t("剪贴板"), t("AI 复制粘贴走哪里")]];
   const BUILTIN_NAMES = {
-    'action.pointer.bezier': '内置贝塞尔轨迹', 'challenge.ocr.ddddocr': '本地 ddddocr',
-    'action.clipboard.virtual': '隔离（默认）', 'action.clipboard.system': '系统全局'
+    'action.pointer.bezier': t("内置贝塞尔轨迹"), 'challenge.ocr.ddddocr': t("本地 ddddocr"),
+    'action.clipboard.virtual': t("隔离（默认）"), 'action.clipboard.system': t("系统全局")
   };
   $('#slots').addEventListener('click', event => {
     const button = event.target.closest('[data-slot]');
-    if (button && !button.classList.contains('on')) post('/api/settings', { slots: { [button.dataset.slot]: button.dataset.provider } }, '已切换：' + (BUILTIN_NAMES[button.dataset.provider] || button.dataset.provider));
+    if (button && !button.classList.contains('on')) post('/api/settings', { slots: { [button.dataset.slot]: button.dataset.provider } }, t("已切换：") + (BUILTIN_NAMES[button.dataset.provider] || button.dataset.provider));
   });
-  $('#ambient-switch').addEventListener('change', event => post('/api/settings', { ambientMouseEnabled: event.target.checked }, event.target.checked ? '已开启自主鼠标游走' : '已关闭自主鼠标游走'));
+  $('#ambient-switch').addEventListener('change', event => post('/api/settings', { ambientMouseEnabled: event.target.checked }, event.target.checked ? t("已开启自主鼠标游走") : t("已关闭自主鼠标游走")));
+  $('#language').addEventListener('change', async event => {
+    event.target.disabled = true;
+    await post('/api/settings', { uiLanguage: event.target.value });
+    event.target.value = I.locale;
+    event.target.disabled = false;
+  });
   $('#open-audit').addEventListener('click', () => shell.newTab(state.info.api + '/audit'));
 
   const commands = {};
-  document.querySelectorAll('[data-copy]').forEach(button => button.addEventListener('click', () => { shell.copy(commands[button.dataset.copy] || ''); toast('已复制'); }));
+  document.querySelectorAll('[data-copy]').forEach(button => button.addEventListener('click', () => { shell.copy(commands[button.dataset.copy] || ''); toast(t("已复制")); }));
 
   /* ---------------- activity timeline ---------------- */
   async function loadEvents() {
@@ -265,9 +280,9 @@
     const signature = [state.online, state.filter, events.length, events[0]?.id, events[0]?.timestamp, [...state.open].join(), state.details.size, Math.floor(Date.now() / 30000)].join('|');
     if (!force && signature === renderTimeline.signature) return;
     renderTimeline.signature = signature;
-    if (!state.online) { box.innerHTML = '<div class="empty"><b>未连接到浏览器内核</b>请用 npm run app 启动完整 App</div>'; return; }
+    if (!state.online) { box.innerHTML = ("<div class=\"empty\"><b>" + th("未连接到浏览器内核") + "</b>" + th("请用 npm run app 启动完整 App") + "</div>"); return; }
     if (!events.length) {
-      box.innerHTML = `<div class="empty"><b>${state.filter === 'failure' ? '没有失败的动作' : '还没有 AI 操作'}</b>AI 通过 MCP 打开网页、点击、读取时，每一步都会出现在这里，并能追溯到当时依据的页面快照。</div>`;
+      box.innerHTML = `<div class="empty"><b>${state.filter === 'failure' ? t("没有失败的动作") : t("还没有 AI 操作")}</b>${th("AI 通过 MCP 打开网页、点击、读取时，每一步都会出现在这里，并能追溯到当时依据的页面快照。")}</div>`;
       return;
     }
     let html = '';
@@ -280,7 +295,7 @@
         let end = index;
         while (events[end + 1]?.action === 'mouse.ambient') end++;
         const count = end - index + 1;
-        html += `<div class="ambient-row">${icon('mouse')}鼠标游走 ${count} 次 · 未点击 · ${esc(when(events[end].timestamp))} – ${esc(when(event.timestamp))}</div>`;
+        html += `<div class="ambient-row">${icon('mouse')}${th("鼠标游走")} ${count} ${th("次 · 未点击 ·")} ${esc(when(events[end].timestamp))} – ${esc(when(event.timestamp))}</div>`;
         index = end;
         continue;
       }
@@ -291,7 +306,7 @@
       html += `<div class="ev ${kind}${open ? ' open' : ''}" data-id="${esc(event.id)}">
         <span class="ico">${icon(info.icon)}</span>
         <div class="main"><div class="what">${esc(info.what)}${event.status === 'started' ? ' …' : ''}</div>${where ? `<div class="where">${esc(where)}</div>` : ''}${event.error ? `<div class="err">${esc(event.error.split('\n')[0].slice(0, 200))}</div>` : ''}</div>
-        <span class="when" title="${esc(new Date(event.timestamp).toLocaleString('zh-CN', { hour12: false }))}">${esc(when(event.timestamp))}</span>
+        <span class="when" title="${esc(new Date(event.timestamp).toLocaleString(I.locale, { hour12: false }))}">${esc(when(event.timestamp))}</span>
         <div class="more">${open ? detailHtml(event) : ''}</div></div>`;
     }
     box.innerHTML = html;
@@ -300,29 +315,29 @@
   function detailHtml(event) {
     const extra = state.details.get(event.id);
     const rows = [
-      ['会话', event.session],
-      ['标签页', event.pageId != null ? '#' + event.pageId : '—'],
-      event.before?.url ? ['操作前', event.before.url] : null,
-      event.after?.url && event.after.url !== event.before?.url ? ['操作后', event.after.url] : null,
-      event.durationMs != null ? ['耗时', event.durationMs + ' ms'] : null,
-      event.capabilities?.length ? ['能力', event.capabilities.map(cap => `${cap.id}@${cap.version}`).join(', ')] : null,
-      event.basisSnapshotId ? ['依据快照', event.basisSnapshotId.slice(0, 8) + (event.basisSnapshotHash ? ' · sha256 ' + event.basisSnapshotHash.slice(0, 12) : '')] : null,
-      ['记录 ID', event.id]
+      [t("会话"), event.session],
+      [t("标签页"), event.pageId != null ? '#' + event.pageId : '—'],
+      event.before?.url ? [t("操作前"), event.before.url] : null,
+      event.after?.url && event.after.url !== event.before?.url ? [t("操作后"), event.after.url] : null,
+      event.durationMs != null ? [t("耗时"), event.durationMs + ' ms'] : null,
+      event.capabilities?.length ? [t("能力"), event.capabilities.map(cap => `${cap.id}@${cap.version}`).join(', ')] : null,
+      event.basisSnapshotId ? [t("依据快照"), event.basisSnapshotId.slice(0, 8) + (event.basisSnapshotHash ? ' · sha256 ' + event.basisSnapshotHash.slice(0, 12) : '')] : null,
+      [t("记录 ID"), event.id]
     ].filter(Boolean);
     let html = `<dl class="kv">${rows.map(([key, value]) => `<dt>${esc(key)}</dt><dd>${esc(value)}</dd>`).join('')}</dl>`;
     if (extra?.snapshot) {
       const lines = extra.snapshot.text.split('\n');
       const refLine = event.target?.ref ? lines.find(line => line.startsWith(`[ref=${event.target.ref}]`)) : '';
-      if (refLine) html += `<div>AI 当时操作的元素：<b>${esc(refLine.replace(/^\[ref=\w+\]\s*/, ''))}</b></div>`;
-      html += `<div class="snap">${esc(lines.slice(0, 80).join('\n'))}${lines.length > 80 ? `\n… 共 ${lines.length} 行` : ''}</div>`;
-    } else if (event.basisSnapshotId && !extra) html += '<div class="muted">正在加载快照…</div>';
-    html += `<p><button class="link" data-copy-id="${esc(event.id)}">复制记录 ID</button></p>`;
+      if (refLine) html += `<div>${th("AI 当时操作的元素：")}<b>${esc(refLine.replace(/^\[ref=\w+\]\s*/, ''))}</b></div>`;
+      html += `<div class="snap">${esc(lines.slice(0, 80).join('\n'))}${lines.length > 80 ? t("\n… 共 {0} 行", [lines.length]) : ''}</div>`;
+    } else if (event.basisSnapshotId && !extra) html += ("<div class=\"muted\">" + th("正在加载快照…") + "</div>");
+    html += `<p><button class="link" data-copy-id="${esc(event.id)}">${th("复制记录 ID")}</button></p>`;
     return html;
   }
 
   $('#timeline').addEventListener('click', async event => {
     const copy = event.target.closest('[data-copy-id]');
-    if (copy) { shell.copy(copy.dataset.copyId); toast('已复制记录 ID'); return; }
+    if (copy) { shell.copy(copy.dataset.copyId); toast(t("已复制记录 ID")); return; }
     if (event.target.closest('.more') && window.getSelection()?.toString()) return;
     const row = event.target.closest('.ev');
     if (!row) return;
@@ -348,30 +363,30 @@
 
   function renderChallenges() {
     const box = $('#challenges');
-    if (!state.challenges.length) { box.innerHTML = '<div class="empty"><b>暂无验证挑战</b>页面出现验证码时会自动处理，处理不了才会请你帮忙。</div>'; return; }
+    if (!state.challenges.length) { box.innerHTML = ("<div class=\"empty\"><b>" + th("暂无验证挑战") + "</b>" + th("页面出现验证码时会自动处理，处理不了才会请你帮忙。") + "</div>"); return; }
     box.innerHTML = state.challenges.map(job => {
       const steps = stepState(job);
       const terminal = ['resolved_unverified', 'failed', 'cancelled'].includes(job.status);
       const actions = [
-        `<button class="btn" data-focus="${esc(job.origin)}">定位标签页</button>`,
-        ['detected', 'ai_recovery_required', 'human_required'].includes(job.status) ? `<button class="btn primary" data-job="${esc(job.id)}" data-cmd="human_start">我来处理</button>` : '',
-        job.status === 'human_takeover' ? `<button class="btn primary" data-job="${esc(job.id)}" data-cmd="human_complete">我已完成验证</button>` : '',
-        !terminal ? `<button class="btn ghost danger" data-job="${esc(job.id)}" data-cmd="cancel">取消</button>` : ''
+        `<button class="btn" data-focus="${esc(job.origin)}">${th("定位标签页")}</button>`,
+        ['detected', 'ai_recovery_required', 'human_required'].includes(job.status) ? `<button class="btn primary" data-job="${esc(job.id)}" data-cmd="human_start">${th("我来处理")}</button>` : '',
+        job.status === 'human_takeover' ? `<button class="btn primary" data-job="${esc(job.id)}" data-cmd="human_complete">${th("我已完成验证")}</button>` : '',
+        !terminal ? `<button class="btn ghost danger" data-job="${esc(job.id)}" data-cmd="cancel">${th("取消")}</button>` : ''
       ].join('');
       return `<div class="card${job.status === 'human_required' ? ' need' : ''}">
         <div class="top"><span class="origin">${esc(host(job.origin))}</span><span class="status ${CHALLENGE_TONE[job.status] || ''}">${esc(CHALLENGE_LABEL[job.status] || job.status)}</span></div>
-        <div class="steps"><span class="${steps[0]}">本地 OCR</span><span class="${steps[1]}">AI 处理</span><span class="${steps[2]}">人工</span></div>
+        <div class="steps"><span class="${steps[0]}">${th("本地 OCR")}</span><span class="${steps[1]}">${th("AI 处理")}</span><span class="${steps[2]}">${th("人工")}</span></div>
         <p>${esc(L.challengeDetail(job.detail))}</p>
-        <div class="meta">${esc(KIND_LABEL[job.kind] || job.kind)} · OCR ${job.ocrAttempts} 次 · AI ${job.aiAttempts} 次 · ${esc(when(job.updatedAt))}</div>
+        <div class="meta">${esc(KIND_LABEL[job.kind] || job.kind)} · OCR ${job.ocrAttempts} ${th("次 · AI")} ${job.aiAttempts} ${th("次 ·")} ${esc(when(job.updatedAt))}</div>
         <div class="actions">${actions}</div></div>`;
     }).join('');
   }
   $('#challenges').addEventListener('click', async event => {
     const focus = event.target.closest('[data-focus]');
-    if (focus) { if (!(await shell.focusOrigin(focus.dataset.focus))) toast('没有找到对应的标签页'); return; }
+    if (focus) { if (!(await shell.focusOrigin(focus.dataset.focus))) toast(t("没有找到对应的标签页")); return; }
     const button = event.target.closest('[data-cmd]');
     if (!button) return;
-    const messages = { human_start: 'AI 已暂停这个页面，请在页面里完成验证', human_complete: '已交还 AI 继续任务', cancel: '已取消' };
+    const messages = { human_start: t("AI 已暂停这个页面，请在页面里完成验证"), human_complete: t("已交还 AI 继续任务"), cancel: t("已取消") };
     if (button.dataset.cmd === 'human_start') await shell.focusOrigin(state.challenges.find(job => job.id === button.dataset.job)?.origin || '');
     await post(`/api/challenges/${encodeURIComponent(button.dataset.job)}/${button.dataset.cmd}`, {}, messages[button.dataset.cmd]);
   });

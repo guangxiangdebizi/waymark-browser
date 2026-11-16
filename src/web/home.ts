@@ -1,5 +1,6 @@
 import type { AppConfig } from '../types.js';
 import { themeCss } from './theme.js';
+import { normalizeLanguage, createTranslator } from '../i18n.js';
 
 const DEFAULT_LINKS = [
   { name: 'Google', url: 'https://www.google.com/', color: '#4285f4' },
@@ -14,12 +15,15 @@ const safeColor = (value?: string) => value && /^#[0-9a-f]{3,8}$/i.test(value) ?
 const safeUrl = (value: string) => /^(https?:\/\/|\/)/i.test(value) ? value : '#';
 
 export function homeHtml(config: AppConfig): string {
+  const locale = normalizeLanguage(config.uiLanguage);
+  const t = createTranslator(locale).t;
   const mcp = `http://${config.server.host}:${config.server.port}/mcp`;
   const links = (config.home?.quickLinks?.length ? config.home.quickLinks : DEFAULT_LINKS).slice(0, 15).map(link => {
-    const label = escapeHtml(('icon' in link && link.icon) || Array.from(link.name)[0] || '?');
-    return `<a class="quick" href="${escapeHtml(safeUrl(link.url))}"><span class="qi" style="background:${safeColor(link.color)}">${label}</span><span>${escapeHtml(link.name)}</span></a>`;
+    const name = config.home?.quickLinks?.length ? link.name : t(link.name);
+    const label = escapeHtml(('icon' in link && link.icon) || Array.from(name)[0] || '?');
+    return `<a class="quick" translate="no" href="${escapeHtml(safeUrl(link.url))}"><span class="qi" style="background:${safeColor(link.color)}">${label}</span><span>${escapeHtml(name)}</span></a>`;
   }).join('');
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  return `<!doctype html><html lang="${locale}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>新标签页</title><link rel="icon" href="data:,"><style>${themeCss}
 body{min-height:100vh;background:radial-gradient(1200px 500px at 50% -120px,var(--accent-soft),transparent 70%),var(--bg)}
 main{max-width:860px;margin:0 auto;padding:9vh 24px 48px}
@@ -28,6 +32,8 @@ main{max-width:860px;margin:0 auto;padding:9vh 24px 48px}
 .quicks:has(.quick:nth-child(-n+5):last-child){grid-template-columns:repeat(auto-fit,minmax(110px,1fr))}
 .hero h1{margin:6px 0 0;font-size:26px;font-weight:650;letter-spacing:.2px}
 .hero p{margin:0;color:var(--text-2)}
+.hero p{text-align:center}.hero label{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text-2)}
+.hero select{padding:5px 8px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--text)}
 form{display:flex;align-items:center;gap:10px;height:52px;padding:0 8px 0 20px;border-radius:26px;background:var(--surface);border:1px solid var(--line);box-shadow:var(--shadow);transition:border-color .15s,box-shadow .15s}
 form:focus-within{border-color:var(--accent);box-shadow:0 0 0 4px var(--accent-soft)}
 form svg{color:var(--text-3);width:18px;height:18px}
@@ -58,7 +64,7 @@ form .btn{height:38px;border-radius:19px;padding:0 18px}
 .wide{grid-column:1/3}
 @media(max-width:720px){.grid{grid-template-columns:1fr}.wide{grid-column:auto}.quicks{grid-template-columns:repeat(4,1fr)}}
 </style></head><body><main>
-<section class="hero"><div class="logo">W</div><h1>Waymark</h1><p>给 AI 用的浏览器 · 你和 AI 共用同一个窗口，每一步都可追溯</p></section>
+<section class="hero"><div class="logo">W</div><h1>Waymark</h1><p>给 AI 用的浏览器 · 你和 AI 共用同一个窗口，每一步都可追溯</p><label>语言 <select id="language" data-language-select></select></label></section>
 <form id="search"><svg viewBox="0 0 16 16"><circle cx="7" cy="7" r="4"/><path d="m10 10 3.5 3.5"/></svg><input id="q" placeholder="搜索必应，或输入网址" autofocus autocomplete="off" spellcheck="false"><button class="btn primary">前往</button></form>
 <nav class="quicks">${links}</nav>
 <section class="grid">
@@ -79,46 +85,8 @@ form .btn{height:38px;border-radius:19px;padding:0 18px}
   <div class="card wide"><h3>AI 最近在做什么</h3><ul class="recent" id="recent"><li class="muted">读取中…</li></ul></div>
 </section>
 </main>
+<script src="/assets/translations.cjs"></script>
+<script src="/assets/i18n.cjs"></script>
 <script src="/assets/labels.js"></script>
-<script>
-(function(){
-  var L = window.AgentLabels;
-  var ctx = { home: location.origin + '/home', api: location.origin };
-  document.getElementById('search').addEventListener('submit', function(event){
-    event.preventDefault();
-    var value = document.getElementById('q').value.trim();
-    if (!value) return;
-    var url;
-    if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(value)) url = value;
-    else if (/^(localhost|\\d{1,3}(\\.\\d{1,3}){3})(:\\d+)?(\\/|$)/.test(value)) url = 'http://' + value;
-    else if (!/\\s/.test(value) && /^[^\\s/]+\\.[a-z]{2,}(:\\d+)?(\\/.*)?$/i.test(value)) url = 'https://' + value;
-    else url = 'https://www.bing.com/search?q=' + encodeURIComponent(value);
-    location.href = url;
-  });
-  document.querySelectorAll('[data-copy]').forEach(function(button){
-    button.addEventListener('click', function(){
-      var text = button.dataset.text || document.getElementById(button.dataset.copy).textContent;
-      navigator.clipboard.writeText(text).then(function(){ button.textContent = '已复制'; setTimeout(function(){ button.textContent = '复制'; }, 1500); });
-    });
-  });
-  function load(){
-    fetch('/api/status').then(function(r){ return r.json(); }).then(function(s){
-      var pending = (s.challenges || []).filter(function(j){ return ['human_required','ai_recovery_required','detected'].indexOf(j.status) >= 0; }).length;
-      document.getElementById('s-ai').innerHTML = s.paused ? '<span class="dot warn"></span>已暂停（由你控制）' : s.busy ? '<span class="dot ok"></span>正在操作' : '<span class="dot ok"></span>就绪';
-      document.getElementById('s-clip').textContent = String(s.clipboardProvider).indexOf('virtual') >= 0 ? '隔离（默认）' : '系统全局';
-      document.getElementById('s-mouse').textContent = s.ambientMouse && s.ambientMouse.enabled ? '开启 · 只悬停不点击' : '关闭';
-      document.getElementById('s-today').textContent = s.todayActions + ' 次';
-      document.getElementById('s-ch').innerHTML = pending ? '<span class="status warn">' + pending + ' 个需要处理</span>' : '<span class="status ok">无</span>';
-    }).catch(function(){ document.getElementById('s-ai').innerHTML = '<span class="dot bad"></span>内核未连接'; });
-    fetch('/api/audit/events?limit=60&ambient=0').then(function(r){ return r.json(); }).then(function(events){
-      var rows = L.collapseStarted(events).filter(function(e){ return L.ACT_ACTIONS.indexOf(e.action) >= 0; }).slice(0, 6);
-      document.getElementById('recent').innerHTML = rows.length ? rows.map(function(e){
-        var d = L.describe(e, ctx), where = L.place(e, ctx);
-        return '<li><span class="ico">' + L.icon(d.icon) + '</span><span class="t">' + L.esc(d.what) + (where ? ' <span class="muted">· ' + L.esc(where) + '</span>' : '') + '</span>' + (e.status === 'failure' ? '<span class="status failure">失败</span>' : '') + '<span class="w">' + L.esc(L.when(e.timestamp)) + '</span></li>';
-      }).join('') : '<li class="muted">还没有 AI 操作。把上面的 MCP 地址交给 AI，它打开的每个页面、每次点击都会记在这里。</li>';
-    }).catch(function(){});
-  }
-  load(); setInterval(load, 5000);
-})();
-</script></body></html>`;
+<script src="/assets/home.js"></script></body></html>`;
 }

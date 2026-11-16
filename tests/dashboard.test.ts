@@ -4,12 +4,11 @@ import { readFileSync } from 'node:fs';
 import { dashboardHtml } from '../src/web/dashboard.js';
 import { homeHtml } from '../src/web/home.js';
 import { loadConfig } from '../src/config.js';
+import { createTranslator } from '../src/i18n.js';
 
-const inlineScript = (html: string) => html.match(/<script>([\s\S]*?)<\/script>/)?.[1];
-
-test('dashboard has valid inline JavaScript and no corrupted question-mark labels', () => {
+test('dashboard has valid JavaScript and no corrupted question-mark labels', () => {
   const html = dashboardHtml();
-  const script = inlineScript(html);
+  const script = readFileSync('src/app/shell/dashboard.js', 'utf8');
   assert.ok(script);
   assert.doesNotThrow(() => new Function(script));
   assert.equal(html.includes('???'), false);
@@ -18,7 +17,7 @@ test('dashboard has valid inline JavaScript and no corrupted question-mark label
 
 test('home page script is valid and points AI clients at the MCP endpoint', () => {
   const html = homeHtml(loadConfig());
-  const script = inlineScript(html);
+  const script = readFileSync('src/app/shell/home.js', 'utf8');
   assert.ok(script);
   assert.doesNotThrow(() => new Function(script));
   assert.match(html, /\/mcp/);
@@ -26,7 +25,7 @@ test('home page script is valid and points AI clients at the MCP endpoint', () =
 });
 
 test('shell scripts parse and avoid inline handlers blocked by the shell CSP', () => {
-  for (const file of ['renderer.js', 'labels.js']) {
+  for (const file of ['renderer.js', 'labels.js', 'home.js', 'dashboard.js', 'translations.cjs', 'i18n.cjs']) {
     const source = readFileSync(`src/app/shell/${file}`, 'utf8');
     assert.doesNotThrow(() => new Function(source), file);
     assert.equal(/\son[a-z]+="/.test(source), false, `${file} must not emit inline event handlers`);
@@ -39,6 +38,7 @@ test('shell scripts parse and avoid inline handlers blocked by the shell CSP', (
 });
 
 test('activity labels describe ledger events in Chinese', async () => {
+  (globalThis as any).WaymarkI18n = createTranslator('zh-CN');
   await import('../src/app/shell/labels.js');
   const labels = (globalThis as any).AgentLabels;
   assert.equal(labels.describe({ action: 'click', target: { ref: 'e3' } }).what, '\u70b9\u51fb \u00b7 \u5143\u7d20 e3');

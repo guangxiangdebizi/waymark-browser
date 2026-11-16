@@ -33,6 +33,16 @@ jobs:
           xvfb-run -a node dist/app/launcher.js > app.log 2>&1 &
           for i in $(seq 1 60); do curl -sf http://127.0.0.1:9510/health && break; sleep 1; done
           npm run test:electron
+      - name: Language switching and English screenshots
+        if: runner.os == 'Linux'
+        env:
+          WAYMARK_ELECTRON_ARGS: --no-sandbox --disable-gpu
+        run: xvfb-run -a -s '-screen 0 1600x1200x24' npx tsx tests/localization_e2e.ts
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Linux' && always()
+        with:
+          name: readme-en
+          path: .research/readme-en/
       - if: failure() && runner.os == 'Linux'
         run: cat app.log || true
 

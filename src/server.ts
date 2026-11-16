@@ -10,9 +10,11 @@ import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { fromRoot } from './config.js';
+import { languageCodes, normalizeLanguage } from './i18n.js';
 
 export async function startServer(config: AppConfig, runtime: BrowserRuntime, challenges: ChallengeBroker) {
   const app = express();
+  config.uiLanguage = normalizeLanguage(config.uiLanguage);
   app.use(express.json({ limit: '1mb' }));
   // Pages in other tabs can fire simple cross-origin POSTs at localhost; cockpit writes require JSON and a local origin.
   app.use('/api', (req, res, next) => {
@@ -34,9 +36,12 @@ export async function startServer(config: AppConfig, runtime: BrowserRuntime, ch
   app.get('/health', (_req, res) => res.json({ ok: true, mcp: '/mcp', audit: '/audit' }));
   const labelsPath = join(dirname(fileURLToPath(import.meta.url)), 'app', 'shell', 'labels.js');
   app.get('/assets/labels.js', (_req, res) => res.type('application/javascript').send(readFileSync(labelsPath, 'utf8')));
+  for (const name of ['i18n.cjs', 'translations.cjs', 'home.js', 'dashboard.js']) {
+    app.get(`/assets/${name}`, (_req, res) => res.type('application/javascript').send(readFileSync(join(dirname(labelsPath), name), 'utf8')));
+  }
   app.get('/', (_req, res) => res.redirect('/home'));
   app.get('/home', (_req, res) => res.type('html').send(homeHtml(config)));
-  app.get('/audit', (_req, res) => res.type('html').send(dashboardHtml()));
+  app.get('/audit', (_req, res) => res.type('html').send(dashboardHtml(config.uiLanguage)));
   app.get('/api/audit/events', (req, res) => {
     const limit = Math.min(Number(req.query.limit) || 100, 500);
     const includeAmbient = req.query.ambient !== '0';
@@ -55,6 +60,7 @@ export async function startServer(config: AppConfig, runtime: BrowserRuntime, ch
     const latest = runtime.audit.list(1, event => event.action !== 'mouse.ambient' && event.action !== 'tabs.list' && !event.action.startsWith('settings.'))[0];
     res.json({
       session: runtime.audit.getSession(), paused: runtime.isPaused(), busy: runtime.busyCount(), tabs: runtime.pageCount(),
+      uiLanguage: config.uiLanguage,
       clipboardProvider: runtime.getClipboardProviderId(), ambientMouse: runtime.getAmbientMouseState(),
       slots: runtime.slots(),
       lastActionAt: latest?.timestamp ?? null,
@@ -71,9 +77,11 @@ export async function startServer(config: AppConfig, runtime: BrowserRuntime, ch
     const item = runtime.audit.get(req.params.id);
     if (!item) res.status(404).json({ error: 'not found' }); else res.json(item);
   });
-  app.get('/api/settings', (_req, res) => res.json({ clipboardProvider: runtime.getClipboardProviderId(), ambientMouse: runtime.getAmbientMouseState(), slots: runtime.slots() }));
+  app.get('/api/settings', (_req, res) => res.json({ uiLanguage: config.uiLanguage, clipboardProvider: runtime.getClipboardProviderId(), ambientMouse: runtime.getAmbientMouseState(), slots: runtime.slots() }));
   app.post('/api/settings', (req, res) => {
     try {
+      const uiLanguage = req.body?.uiLanguage;
+      if (uiLanguage !== undefined && !languageCodes.includes(uiLanguage)) throw new Error('Unsupported UI language');
       if (req.body?.clipboardProvider !== undefined) runtime.setClipboardProvider(String(req.body.clipboardProvider));
       if (typeof req.body?.ambientMouseEnabled === 'boolean') runtime.setAmbientMouseEnabled(req.body.ambientMouseEnabled);
       if (typeof req.body?.pointerProvider === 'string') runtime.setSlot('pointer', req.body.pointerProvider);
@@ -84,11 +92,13 @@ export async function startServer(config: AppConfig, runtime: BrowserRuntime, ch
       const path = fromRoot(config.settingsFile);
       mkdirSync(dirname(path), { recursive: true });
       const current = existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : {};
+      current.uiLanguage = uiLanguage ?? config.uiLanguage;
       const slots = runtime.slots();
       current.capabilities = { ...current.capabilities, clipboard: slots.clipboard.active, pointer: slots.pointer.active, challengeOcr: slots.ocr.active };
       current.browser = { ...current.browser, ambientMouse: { ...current.browser?.ambientMouse, enabled: runtime.getAmbientMouseState().enabled } };
       writeFileSync(path, JSON.stringify(current, null, 2));
-      res.json({ ok: true, clipboardProvider: runtime.getClipboardProviderId(), ambientMouse: runtime.getAmbientMouseState(), slots });
+      config.uiLanguage = current.uiLanguage;
+      res.json({ ok: true, uiLanguage: config.uiLanguage, clipboardProvider: runtime.getClipboardProviderId(), ambientMouse: runtime.getAmbientMouseState(), slots });
     } catch (error) { res.status(400).json({ error: error instanceof Error ? error.message : String(error) }); }
   });
   app.get('/api/challenges', (_req, res) => res.json(challenges.list()));
