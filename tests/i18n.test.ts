@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
+import ts from 'typescript';
 import { createTranslator, normalizeLanguage } from '../src/i18n.js';
 import { homeHtml } from '../src/web/home.js';
 import { dashboardHtml } from '../src/web/dashboard.js';
@@ -10,6 +11,28 @@ import { loadConfig } from '../src/config.js';
 
 const { rows, codes } = createRequire(import.meta.url)('../src/app/shell/i18n.cjs');
 const placeholders = (text: string) => [...text.matchAll(/\{\d+\}/g)].map(match => match[0]).sort();
+
+test('every static label and literal translation call has a catalog entry', () => {
+  const keys = new Set((rows as string[][]).map(row => row[0]));
+  for (const path of ['src/app/shell/renderer.js', 'src/app/shell/labels.js', 'src/app/shell/home.js', 'src/app/shell/dashboard.js', 'src/app/electron-main.ts']) {
+    const source = ts.createSourceFile(path, readFileSync(path, 'utf8'), ts.ScriptTarget.Latest, true);
+    const visit = (node: ts.Node) => {
+      if (ts.isCallExpression(node) && ['t', 'th'].includes(node.expression.getText(source))) {
+        const key = node.arguments[0];
+        if (key && ts.isStringLiteral(key)) assert.ok(keys.has(key.text), `${path}: ${key.text}`);
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(source);
+  }
+  for (const html of [readFileSync('src/app/shell/index.html', 'utf8'), homeHtml(loadConfig()), dashboardHtml()]) {
+    const pattern = /(?:title|placeholder|aria-label)="([^"<>]*[\p{Script=Han}][^"<>]*)"|(?:^|>)([^<>]*[\p{Script=Han}][^<>]*)(?=<|$)/gu;
+    for (const match of html.matchAll(pattern)) {
+      const key = (match[1] ?? match[2]).trim();
+      assert.ok(keys.has(key), `static label: ${key}`);
+    }
+  }
+});
 
 test('all eight languages have complete messages and matching placeholders', () => {
   assert.equal(codes.length, 8);

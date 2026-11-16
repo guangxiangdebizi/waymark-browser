@@ -106,7 +106,7 @@
       case 'settings.clipboard': return { icon: 'gear', what: t("剪贴板切换为") + ({ 'action.clipboard.virtual': t("隔离模式"), 'action.clipboard.system': t("系统全局") }[detail.provider] || ' ' + detail.provider) };
       case 'settings.pointer': return { icon: 'gear', what: t("鼠标轨迹模型切换为 ") + detail.provider };
       case 'settings.ocr': return { icon: 'gear', what: t("验证码识别切换为 ") + detail.provider };
-      case 'settings.ambientMouse': return { icon: 'gear', what: (detail.enabled ? t("开启") : t("关闭")) + t("自主鼠标游走") };
+      case 'settings.ambientMouse': return { icon: 'gear', what: t("自主鼠标游走") + ' · ' + (detail.enabled ? t("开启") : t("关闭")) };
       case 'settings.control': return { icon: 'gear', what: detail.paused ? t("用户暂停了 AI") : t("用户恢复了 AI") };
       case 'browser.launch': return { icon: 'power', what: t("浏览器启动") };
       default:

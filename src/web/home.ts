@@ -43,13 +43,14 @@ form .btn{height:38px;border-radius:19px;padding:0 18px}
 .quick{display:flex;flex-direction:column;align-items:center;gap:8px;padding:14px 6px;border-radius:12px;color:var(--text-2);text-decoration:none;font-size:12.5px;transition:background .12s}
 .quick:hover{background:var(--surface)}
 .qi{width:40px;height:40px;border-radius:12px;display:grid;place-items:center;color:#fff;font-weight:700;font-size:16px;box-shadow:var(--shadow)}
-.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
-.card{padding:16px 18px}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.card{padding:16px 18px;min-width:0}
 .card h3{margin:0 0 12px;font-size:13px;color:var(--text-3);font-weight:600}
-.stat{display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--line)}
+.stat{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px solid var(--line)}
 .stat:last-child{border-bottom:0}
 .stat span:first-child{color:var(--text-2)}
-.stat b{font-weight:600;display:flex;align-items:center;gap:8px}
+.stat b{font-weight:600;display:flex;align-items:center;justify-content:flex-end;gap:8px;text-align:right}
+.quick{min-width:0;overflow-wrap:anywhere;text-align:center}
 .copy{display:flex;align-items:center;gap:8px;padding:6px 6px 6px 12px;border-radius:9px;background:var(--surface-2);margin-bottom:8px}
 .copy code{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .copy .btn{height:28px;padding:0 10px;font-size:12px}

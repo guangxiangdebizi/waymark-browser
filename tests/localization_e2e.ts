@@ -92,6 +92,8 @@ try {
   await shell.waitForFunction(() => document.getElementById('control-sub')?.textContent?.includes('README demo'));
   const currentHome = app.electronApp.context().pages().find(page => page.url() === base + '/home')!;
   await currentHome.waitForFunction(() => document.getElementById('s-ai')?.textContent?.includes('Ready'));
+  const status = await (await fetch(base + '/api/status')).json();
+  await currentHome.waitForFunction(count => document.getElementById('s-today')?.textContent === count + ' actions', status.todayActions);
   if (process.platform === 'linux') {
     // Capture the native window, including child WebContentsViews, not just the shell surface.
     const bounds = await app.electronApp.evaluate(({ BrowserWindow }) => {
@@ -126,9 +128,11 @@ try {
   await page.locator('#events .row').first().waitFor();
   await page.screenshot({ path: join(output, 'audit.png'), fullPage: true });
   for (const width of [320, 768, 1024, 1440]) {
-    await page.setViewportSize({ width, height: 900 });
-    const overflow = await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1);
-    assert.equal(overflow, false, `audit overflows at ${width}px`);
+    for (const surface of [page, currentHome]) {
+      await surface.setViewportSize({ width, height: 900 });
+      const overflow = await surface.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1);
+      assert.equal(overflow, false, `${surface.url()} overflows at ${width}px`);
+    }
   }
   assert.deepEqual(errors, [], 'renderer JavaScript errors');
   console.log('LOCALIZATION E2E PASS: eight languages, persistence, invalid locale, live actions, English screenshots');
