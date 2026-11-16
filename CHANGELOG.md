@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.3.0 — multilingual interface
+
+- English is the default interface language. Added Simplified Chinese, Japanese, Korean, Spanish, French, German and Portuguese.
+- Language selection in Settings, the start page and the audit page is saved locally and shared across app surfaces, including native context menus.
+- Localized navigation, status messages, activity descriptions, challenge handling, dates and audit controls. Website content, user input and raw records stay unchanged; CLI and MCP identifiers remain in English.
+- The English README uses new screenshots captured from the running app and bundled local demos. Chinese screenshots are retained in the Chinese README.
+- Added eight-language switching, restart-persistence, responsive audit-page and translation-completeness tests.
+
 ## v0.2.0 — first public release
 
 - Closing the active tab selects a remaining tab for automation and ambient pointer input.

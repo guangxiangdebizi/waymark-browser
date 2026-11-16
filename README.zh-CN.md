@@ -14,6 +14,8 @@
 
 ![Waymark：AI 在浏览 GitHub Trending，右侧面板实时显示每一步](docs/images/main.png)
 
+支持 **English（默认）、简体中文、日本語、한국어、Español、Français、Deutsch、Português**。在 **Settings → Language** 中选择“简体中文”，也可在首页或溯源页切换。语言偏好会保存，重启后仍生效。网页内容、用户输入、原始审计记录及 MCP 字段保持原样；CLI 命令和诊断仍为英文。详见[多语言说明](docs/localization.md)。
+
 ## 自动化优先 → AI 其次 → 人工兜底
 
 现在大多数 AI 浏览器的做法是：什么都先丢给大模型，模型搞不定再叫人。可是 AI 调用本身也是成本。每一次截图、重试、"鼠标再往左挪一点"都在花 token、时间和钱。Waymark 在模型前面加了一层**确定性的自动化层**：

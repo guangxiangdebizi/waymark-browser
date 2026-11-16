@@ -11,7 +11,7 @@ function result(value: unknown, origin?: string) {
 }
 
 export function createMcpServer(runtime: BrowserRuntime, challenges: ChallengeBroker): McpServer {
-  const server = new McpServer({ name: 'waymark', version: '0.2.0' });
+  const server = new McpServer({ name: 'waymark', version: '0.3.0' });
   const wrap = (fn: (args: any) => Promise<unknown>) => async (args: any) => {
     try { return result(await fn(args)); } catch (error) { return { ...result({ error: error instanceof Error ? error.message : String(error) }), isError: true }; }
   };

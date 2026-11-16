@@ -11,6 +11,8 @@ pip install "waymark-browser[ocr]"     # plus local ddddocr for text CAPTCHAs
 
 Waymark itself is an Electron app, so you also need **Node.js 22+**.
 
+The desktop interface supports English (default), Simplified Chinese, Japanese, Korean, Spanish, French, German and Portuguese. Choose **Settings → Language** in the app, or use the selector on the start or audit page. The choice persists across restarts. CLI commands, diagnostics and MCP fields remain in English.
+
 ## Quick start
 
 ```bash

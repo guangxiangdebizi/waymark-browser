@@ -12,7 +12,7 @@ Automation first, AI second, people last. Every automation step is pluggable, an
 <a href="README.zh-CN.md">中文</a>
 </p>
 
-![Waymark: an AI agent browsing GitHub Trending while the side panel shows each step](docs/images/main.png)
+![Waymark in English: the start page and activity from the bundled local demo](docs/images/en/main.png)
 
 ## Automation first. AI second. People last.
 
@@ -38,11 +38,12 @@ The automation layer is a set of **capability slots**. Each slot has a built-in 
 
 Many sites look at *how* input arrives: pointer paths, speed profiles, hover and dwell, press timing. A click that teleports to the centre of a button looks nothing like a person, so pointer behaviour should be a model you control rather than a constant. Plugins only compute results: a path from coordinates, text from an image. Waymark executes them, so a plugin never sees the page, cookies or DOM. A plugin that throws or times out falls back to the built-in, and the agent's action still succeeds. See [docs/plugins.md](docs/plugins.md).
 
-<p align="center"><img src="docs/images/models.png" width="340" alt="Choosing providers for each capability slot in the side panel"></p>
+<p align="center"><img src="docs/images/en/models.png" width="340" alt="Choosing providers for each capability slot in the side panel"></p>
 
 ## What else you get
 
 - **A real browser window you can use.** Tabs, omnibox, back/forward, context menus and shortcuts all work. The pages the agent works in are ordinary tabs, marked with an `AI` badge.
+- **Eight interface languages.** English (default), Simplified Chinese, Japanese, Korean, Spanish, French, German and Portuguese. Choose **Settings → Language**, or use the selector on the start page or audit page. Your choice is saved across restarts.
 - **MCP endpoint for any agent.** `tabs`, `navigate`, `snapshot`, `read`, `act`, `wait`, `challenge`, `audit`, `capabilities`. Works with Claude Code, Codex, Cursor and anything that speaks MCP over HTTP or stdio.
 - **Traceable actions.** Every navigation, click, fill and read is written to a local ledger. Each entry records the session, before and after URLs, duration, the provider that ran it, and the SHA-256 of the snapshot it was based on. Click any step in the side panel or on `/audit` to see the element the agent targeted.
 - **Isolated input by default.** Agent mouse and keyboard events go only to the target tab. Clipboard operations go to a per-session virtual clipboard, so your system clipboard and cursor stay yours. A global clipboard mode is one switch away.
@@ -52,8 +53,8 @@ Many sites look at *how* input arrives: pointer paths, speed profiles, hover and
 
 <table>
 <tr>
-<td><img src="docs/images/challenges.png" alt="Challenge panel"></td>
-<td><img src="docs/images/audit.png" alt="Audit ledger"></td>
+<td><img src="docs/images/en/challenges.png" alt="English challenge panel showing the bundled local test fixture"></td>
+<td><img src="docs/images/en/audit.png" alt="English audit ledger showing local demo actions"></td>
 </tr>
 <tr>
 <td align="center">CAPTCHA jobs: local OCR → AI → you</td>
@@ -110,6 +111,8 @@ waymark pause                        # agents are refused until `waymark resume`
 ```
 
 See [`cli/README.md`](cli/README.md) for every command.
+
+UI language does not change website content, user input, raw audit records or MCP fields. CLI commands and diagnostics remain in English. See [localization](docs/localization.md) to add or edit translations.
 
 ## MCP tools
 
