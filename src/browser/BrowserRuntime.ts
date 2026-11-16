@@ -119,8 +119,7 @@ export class BrowserRuntime {
       const before = await this.pageState(closing);
       if (this.pageCloser) await this.pageCloser(closing);
       else await closing.close();
-      this.pages.delete(pageId);
-      this.refs.delete(pageId);
+      this.unregister(pageId);
       this.audit.record({ pageId, action: 'tabs.close', before, status: 'success' });
       return { closed: pageId };
     }
@@ -351,8 +350,17 @@ export class BrowserRuntime {
     this.ids.set(page, id);
     this.pages.set(id, page);
     if (!this.activePage) this.activePage = id;
-    page.on('close', () => { this.pages.delete(id); this.refs.delete(id); });
+    page.on('close', () => this.unregister(id));
     return id;
+  }
+
+  private unregister(id: number): void {
+    const order = [...this.pages.keys()];
+    const index = order.indexOf(id);
+    this.pages.delete(id);
+    this.refs.delete(id);
+    this.busyPages.delete(id);
+    if (this.activePage === id) this.activePage = order[index + 1] ?? order[index - 1] ?? 0;
   }
 
   private page(id: number): Page {

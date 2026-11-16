@@ -10,7 +10,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -21,8 +21,9 @@ jobs:
         run: |
           version=$(python -c "import re,pathlib;print(re.search(r'__version__ = \"(.+?)\"', pathlib.Path('cli/src/waymark_browser/__init__.py').read_text()).group(1))")
           test "v$version" = "${GITHUB_REF_NAME}" || { echo "tag ${GITHUB_REF_NAME} != package v$version"; exit 1; }
-      - run: pip install build
+      - run: pip install build twine
       - run: python -m build cli --outdir dist
+      - run: python -m twine check --strict dist/*
       - name: Smoke-test the wheel
         run: |
           python -m venv /tmp/v && /tmp/v/bin/pip install dist/*.whl

@@ -111,7 +111,11 @@ def safe_extract(archive: bytes, target: Path) -> None:
 
 
 def setup(app_dir: str | None, ref: str | None, skip_install: bool = False) -> Path:
-    target = Path(app_dir).expanduser() if app_dir else home() / "app"
+    target = (Path(app_dir).expanduser() if app_dir else home() / "app").resolve()
+    if target.exists() and (not target.is_dir() or
+                            (any(target.iterdir()) and not is_app_dir(target)) or
+                            (target / ".git").exists()):
+        raise SystemExit(f"Refusing to replace {target}: choose an empty directory or a Waymark installation without .git.")
     ref = ref or f"v{__version__}"
     print(f"Downloading {REPO}@{ref} ...", flush=True)
     try:

@@ -2,6 +2,8 @@
 
 ## v0.2.0 — first public release
 
+- Closing the active tab selects a remaining tab for automation and ambient pointer input.
+- The CLI installer refuses to replace unrelated non-empty directories or Git checkouts.
 - **Waymark** is the new name of the project, previously an internal prototype called Agent Browser. `AGENT_BROWSER_*` environment variables are still honoured.
 - **Desktop shell rebuilt.** Chrome-style tabs (drag to reorder, middle-click close, context menu), back/forward/reload/home, omnibox with search, page context menu and keyboard shortcuts.
 - **Fixed the dead toolbar.** The sandboxed preload is now CommonJS, and the shell no longer uses inline handlers that CSP blocks.

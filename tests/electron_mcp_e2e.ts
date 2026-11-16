@@ -69,9 +69,16 @@ try {
   assert.equal(trace.snapshot.id, snapshot.id);
   assert.equal(trace.event.capabilities[0].id, 'action.pointer.bezier');
   await client.callTool({ name: 'tabs', arguments: { action: 'close', page: created.id } });
-  await new Promise(resolve => setTimeout(resolve, 4000));
-  const events = unwrap(await client.callTool({ name: 'audit', arguments: { action: 'list', limit: 200 } }));
-  const ambient = events.find(event => event.action === 'mouse.ambient');
+  const remaining = unwrap(await client.callTool({ name: 'tabs', arguments: { action: 'list' } }));
+  assert.equal(remaining.find(tab => tab.active)?.id, homeTab.id);
+  const closedAt = Date.now();
+  let ambient: any;
+  while (Date.now() - closedAt < 15000) {
+    const events = unwrap(await client.callTool({ name: 'audit', arguments: { action: 'list', limit: 200 } }));
+    ambient = events.find(event => event.action === 'mouse.ambient' && event.pageId === homeTab.id && Date.parse(event.timestamp) >= closedAt);
+    if (ambient) break;
+    await new Promise(resolve => setTimeout(resolve, 250));
+  }
   assert.ok(ambient, 'No autonomous ambient mouse event was generated');
   assert.equal(ambient.detail.clicked, false);
   console.log('ELECTRON E2E PASS: home tab + cockpit guards + pause lease + native app tab + MCP + virtual clipboard + click + snapshot trace + autonomous ambient mouse');
