@@ -52,7 +52,7 @@ function renderChallenges(jobs) {
     if (j.status === 'human_takeover') buttons += '<button class="btn primary" data-human="human_complete" data-id="' + esc(j.id) + ("\">" + th("接管完成") + "</button>");
     if (['resolved_unverified', 'failed', 'cancelled'].indexOf(j.status) < 0) buttons += '<button class="btn" data-human="cancel" data-id="' + esc(j.id) + ("\">" + th("取消") + "</button>");
     return '<div class="job"><div class="top"><span>' + esc(L.host(j.origin)) + '</span><span class="status ' + (L.CHALLENGE_TONE[j.status] || '') + '">' + esc(L.CHALLENGE_LABEL[j.status] || j.status) + '</span></div>' +
-      '<p>' + esc(L.KIND_LABEL[j.kind] || j.kind) + ' · OCR ' + j.ocrAttempts + t(" 次 · AI ") + j.aiAttempts + t(" 次 · ") + esc(L.challengeDetail(j.detail)) + '</p><div class="btns">' + buttons + '</div></div>';
+      '<p>' + esc(L.KIND_LABEL[j.kind] || j.kind) + ' · ' + th('识别尝试：OCR {0} · AI {1}', [j.ocrAttempts, j.aiAttempts]) + ' · ' + esc(L.challengeDetail(j.detail)) + '</p><div class="btns">' + buttons + '</div></div>';
   }).join('') : ("<div class=\"muted\">" + th("无挑战任务") + "</div>");
   q('challenges').querySelectorAll('[data-human]').forEach(function (el) { el.addEventListener('click', function () { post('/api/challenges/' + el.dataset.id + '/' + el.dataset.human).then(load).catch(reportLoadError); }); });
 }

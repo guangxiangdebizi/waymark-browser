@@ -377,7 +377,7 @@ ${esc(tab.url)}" style="flex-basis:${width}px">
         <div class="top"><span class="origin">${esc(host(job.origin))}</span><span class="status ${CHALLENGE_TONE[job.status] || ''}">${esc(CHALLENGE_LABEL[job.status] || job.status)}</span></div>
         <div class="steps"><span class="${steps[0]}">${th("本地 OCR")}</span><span class="${steps[1]}">${th("AI 处理")}</span><span class="${steps[2]}">${th("人工")}</span></div>
         <p>${esc(L.challengeDetail(job.detail))}</p>
-        <div class="meta">${esc(KIND_LABEL[job.kind] || job.kind)} · OCR ${job.ocrAttempts} ${th("次 · AI")} ${job.aiAttempts} ${th("次 ·")} ${esc(when(job.updatedAt))}</div>
+        <div class="meta">${esc(KIND_LABEL[job.kind] || job.kind)} · ${th('识别尝试：OCR {0} · AI {1}', [job.ocrAttempts, job.aiAttempts])} · ${esc(when(job.updatedAt))}</div>
         <div class="actions">${actions}</div></div>`;
     }).join('');
   }

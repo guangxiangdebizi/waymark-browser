@@ -123,8 +123,9 @@
     const time = Date.parse(ts);
     const diff = (Date.now() - time) / 1000;
     if (diff < 10) return t("刚刚");
-    if (diff < 60) return Math.floor(diff) + t(" 秒前");
-    if (diff < 3600) return Math.floor(diff / 60) + t(" 分钟前");
+    const relative = new Intl.RelativeTimeFormat(I.locale, { numeric: 'always' });
+    if (diff < 60) return relative.format(-Math.floor(diff), 'second');
+    if (diff < 3600) return relative.format(-Math.floor(diff / 60), 'minute');
     return new Date(time).toLocaleTimeString(I.locale, { hour12: false });
   }
   function dayLabel(ts) {

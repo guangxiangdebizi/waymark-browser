@@ -3,6 +3,7 @@ import { createServer } from 'node:http';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { createTranslator, languageCodes } from '../src/i18n.js';
 import { startWaymark } from '../src/app/start.js';
 
@@ -88,8 +89,28 @@ try {
   await app.runtime.tabs('close', demo.id);
   await shell.locator('#panel-tabs [data-view=activity]').click();
   await shell.waitForFunction(() => document.querySelector('#timeline')?.textContent?.includes('Click'));
-  const image = await app.electronApp.evaluate(async ({ BrowserWindow }) => (await BrowserWindow.getAllWindows()[0].capturePage()).toPNG().toString('base64'));
-  writeFileSync(join(output, 'main.png'), Buffer.from(image, 'base64'));
+  await shell.waitForFunction(() => document.getElementById('control-sub')?.textContent?.includes('README demo'));
+  const currentHome = app.electronApp.context().pages().find(page => page.url() === base + '/home')!;
+  await currentHome.waitForFunction(() => document.getElementById('s-ai')?.textContent?.includes('Ready'));
+  if (process.platform === 'linux') {
+    // Capture the native window, including child WebContentsViews, not just the shell surface.
+    const bounds = await app.electronApp.evaluate(({ BrowserWindow }) => {
+      const window = BrowserWindow.getAllWindows()[0];
+      window.focus();
+      return window.getBounds();
+    });
+    execFileSync('scrot', ['-a', `${bounds.x},${bounds.y},${bounds.width},${bounds.height}`, join(output, 'main.png')]);
+  } else {
+    const image = await app.electronApp.evaluate(async ({ BrowserWindow, desktopCapturer }) => {
+      const window = BrowserWindow.getAllWindows()[0];
+      const bounds = window.getBounds();
+      const sources = await desktopCapturer.getSources({ types: ['window'], thumbnailSize: { width: bounds.width, height: bounds.height } });
+      const source = sources.find(source => source.id === window.getMediaSourceId());
+      if (!source || source.thumbnail.isEmpty()) throw new Error('Native window capture unavailable');
+      return source.thumbnail.toPNG().toString('base64');
+    });
+    writeFileSync(join(output, 'main.png'), Buffer.from(image, 'base64'));
+  }
   await shell.locator('#panel-tabs [data-view=settings]').click();
   await shell.locator('#slots .model').first().waitFor();
   await shell.locator('.view[data-view=settings] .group').nth(2).screenshot({ path: join(output, 'models.png') });

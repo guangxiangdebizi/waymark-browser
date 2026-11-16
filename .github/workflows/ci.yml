@@ -28,7 +28,7 @@ jobs:
       - name: End-to-end against the real Electron app
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq xvfb > /dev/null
+          sudo apt-get update -qq && sudo apt-get install -y -qq xvfb scrot fonts-noto-cjk > /dev/null
           export WAYMARK_ELECTRON_ARGS="--no-sandbox --disable-gpu"
           xvfb-run -a node dist/app/launcher.js > app.log 2>&1 &
           for i in $(seq 1 60); do curl -sf http://127.0.0.1:9510/health && break; sleep 1; done
