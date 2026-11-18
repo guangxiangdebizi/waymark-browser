@@ -11,7 +11,7 @@ function result(value: unknown, origin?: string) {
 }
 
 export function createMcpServer(runtime: BrowserRuntime, challenges: ChallengeBroker): McpServer {
-  const server = new McpServer({ name: 'waymark', version: '0.3.0' });
+  const server = new McpServer({ name: 'waymark', version: '0.4.0' });
   const wrap = (fn: (args: any) => Promise<unknown>) => async (args: any) => {
     try { return result(await fn(args)); } catch (error) { return { ...result({ error: error instanceof Error ? error.message : String(error) }), isError: true }; }
   };
@@ -36,7 +36,7 @@ export function createMcpServer(runtime: BrowserRuntime, challenges: ChallengeBr
   }, wrap(async args => runtime.navigateAction(args.page, args.action, args.url)));
 
   server.registerTool('snapshot', {
-    description: 'Capture the current interactive page and stable element refs. Refs expire on the next snapshot or navigation.',
+    description: 'Capture the visible interactive elements with refs, labels and state (selected option and options of selects, checked/unchecked, filled/empty). Elements hidden from people (transparent, clipped, zero-size) are left out. A ref stays valid while its element exists; navigation invalidates refs.',
     inputSchema: { page: z.number().int(), mode: z.enum(['full', 'interactive']).optional(), depth: z.number().optional() }
   }, wrap(async args => runtime.snapshot(args.page)));
 
@@ -46,9 +46,9 @@ export function createMcpServer(runtime: BrowserRuntime, challenges: ChallengeBr
   }, wrap(async args => runtime.read(args.page, args.limit, args.format)));
 
   server.registerTool('act', {
-    description: 'Execute a semantic browser action. Pointer movement, timing, and settled checks run locally.',
+    description: 'Execute a semantic browser action; pointer movement, keyboard timing and settle checks run locally through the active providers. fill takes fields [{ref, value}] and handles each by control type: text is typed, selects pick the option by label, checkboxes/radios are toggled, date-like inputs are set. select picks an option by label in a native select or custom combobox. type enters text at the caret (or into ref). press takes key names only (Enter, Tab, ArrowDown, Control+A). The result includes changes: elements that appeared (with refs), disappeared or changed state, or the full snapshot after a navigation, so a new snapshot is rarely needed.',
     inputSchema: {
-      page: z.number().int(), kind: z.enum(['click', 'fill', 'press', 'scroll', 'hover', 'paste', 'copy']),
+      page: z.number().int(), kind: z.enum(['click', 'fill', 'press', 'scroll', 'hover', 'paste', 'copy', 'select', 'type']),
       ref: z.string().optional(), value: z.string().optional(), fields: z.array(z.object({ ref: z.string(), value: z.string() })).optional(),
       key: z.string().optional(), direction: z.enum(['up', 'down', 'left', 'right']).optional(), amount: z.number().optional()
     }

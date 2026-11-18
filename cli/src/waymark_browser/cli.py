@@ -136,6 +136,14 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("fill", help="fill inputs: REF VALUE [REF VALUE ...]")
     p.add_argument("page", type=int)
     p.add_argument("pairs", nargs="+")
+    p = sub.add_parser("select", help="choose an option by its label in a select or combobox")
+    p.add_argument("page", type=int)
+    p.add_argument("ref")
+    p.add_argument("option")
+    p = sub.add_parser("type", help="type text with the keyboard provider, into REF or at the caret")
+    p.add_argument("page", type=int)
+    p.add_argument("text")
+    p.add_argument("--ref")
     p = sub.add_parser("paste", help="paste text into an element through the clipboard provider")
     p.add_argument("page", type=int)
     p.add_argument("ref")
@@ -219,6 +227,13 @@ def run(args: argparse.Namespace) -> int:
         emit(client.call("act", {"page": args.page, "kind": command, "ref": args.ref}), True)
     elif command == "fill":
         emit(client.call("act", {"page": args.page, "kind": "fill", "fields": parse_fields(args.pairs)}), True)
+    elif command == "select":
+        emit(client.call("act", {"page": args.page, "kind": "select", "ref": args.ref, "value": args.option}), True)
+    elif command == "type":
+        arguments = {"page": args.page, "kind": "type", "value": args.text}
+        if args.ref:
+            arguments["ref"] = args.ref
+        emit(client.call("act", arguments), True)
     elif command == "paste":
         emit(client.call("act", {"page": args.page, "kind": "paste", "ref": args.ref, "value": args.text}), True)
     elif command == "press":

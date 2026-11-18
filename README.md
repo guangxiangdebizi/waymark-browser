@@ -33,12 +33,28 @@ The automation layer is a set of **capability slots**. Each slot has a built-in 
 | Slot | Built-in | Bring your own |
 |---|---|---|
 | **Pointer movement**: every agent click, hover and idle movement | Curved Bézier path | [Minimum-jerk reach with Fitts-law timing](examples/plugins/pointer-minimum-jerk.mjs), [WindMouse in Python](examples/plugins/pointer_model.py), or your own model trained on recorded mouse traces |
+| **Keyboard**: every character the agent types | Human-paced typing: key hold time, uneven gaps, word pauses, corrected typos | Your own typing-cadence model, or `action.keyboard.fast` when speed matters more |
 | **CAPTCHA solving**: the first step in the challenge chain | Local `ddddocr` worker | [Any OCR engine or fine-tuned model in a separate process](examples/plugins/ocr_solver.py) |
 | **Clipboard**: where agent copy and paste go | Isolated per-session clipboard; system clipboard on request | Any provider with `read` / `write` / paste |
 
-Many sites look at *how* input arrives: pointer paths, speed profiles, hover and dwell, press timing. A click that teleports to the centre of a button looks nothing like a person, so pointer behaviour should be a model you control rather than a constant. Plugins only compute results: a path from coordinates, text from an image. Waymark executes them, so a plugin never sees the page, cookies or DOM. A plugin that throws or times out falls back to the built-in, and the agent's action still succeeds. See [docs/plugins.md](docs/plugins.md).
+Many sites look at *how* input arrives: pointer paths, speed profiles, hover and dwell, key hold and press timing. A click that teleports to the centre of a button, or text that appears 60 characters a second with 0 ms key holds, looks nothing like a person, so input behaviour should be a model you control rather than a constant. Plugins only compute results: a path from coordinates, text from an image. Waymark executes them, so a plugin never sees the page, cookies or DOM. A plugin that throws or times out falls back to the built-in, and the agent's action still succeeds. See [docs/plugins.md](docs/plugins.md).
 
 <p align="center"><img src="docs/images/en/models.png" width="340" alt="Choosing providers for each capability slot in the side panel"></p>
+
+## Measured against a published AI-agent detector
+
+[AgentShield](https://arxiv.org/abs/2610.41181) (IEEE S&P 2027) spots browser agents by how they fill in forms. We gave the
+same model (DeepSeek V4.1 Flash) the paper's task through browser-use and through Waymark, 10 sessions per form, and scored
+them with the paper's own detector (0 = human, 1 = automated):
+
+| Form | Humans (paper) | browser-use | Waymark 0.4.0 |
+|---|---|---|---|
+| Simple form | 0.03 | 1.00 | **0.00** |
+| Dynamic form, 22 fields revealed one by one | 0.04 | 0.96 | **0.05** |
+| Key hold / pointer moves per session (dynamic) | 108 ms / 175 | 11 ms / 0 | 121 ms / 172 |
+
+All Waymark sessions submitted the form. The remaining tell is speed: Waymark's median reaction is slower than a person's.
+Method, caveats and raw data: [docs/benchmark-agentshield.md](docs/benchmark-agentshield.md).
 
 ## What else you get
 
@@ -121,13 +137,13 @@ UI language does not change website content, user input, raw audit records or MC
 | `name_session` | Label the agent session; the name is attached to every ledger entry |
 | `tabs` | list / new / active / close |
 | `navigate` | url / back / forward / reload; returns any detected challenge |
-| `snapshot` | Visible interactive elements with short-lived refs (`e1`, `e2`, ...) |
+| `snapshot` | Elements a person can see, with refs (`e1`, `e2`, ...), labels and state (selected option, checked, filled) |
 | `read` | Visible text, or the rendered DOM with `format: "html"`; reports truncation |
-| `act` | click, fill, paste, copy, press, scroll, hover by ref; pointer and timing run locally |
+| `act` | click, fill, select, type, paste, copy, press, scroll, hover by ref; pointer and keyboard run locally, and the result lists what appeared, disappeared or changed |
 | `wait` | Text, CSS selector or duration (max 30 s) |
 | `challenge` | Inspect or advance OCR → AI → human challenge jobs |
 | `audit` | Read the ledger and the snapshot behind any action |
-| `capabilities` | Registered local providers (pointer, clipboard, OCR) with versions and data-egress flags |
+| `capabilities` | Registered local providers (pointer, keyboard, clipboard, OCR) with versions and data-egress flags |
 
 ## How it fits together
 
@@ -135,7 +151,7 @@ UI language does not change website content, user input, raw audit records or MC
 AI agent ──MCP──▶ Waymark runtime ─────────────▶ Electron WebContentsView tabs
                     │  BrowserRuntime   snapshots, refs, actions, pause lease
                     │  ChallengeBroker  detect → ddddocr → AI budget → human
-                    │  Capability slots pointer · CAPTCHA/OCR · clipboard, built-in or plugin
+                    │  Capability slots pointer · keyboard · CAPTCHA/OCR · clipboard, built-in or plugin
                     └  AuditLog         events.jsonl + hashed snapshots → side panel & /audit
 ```
 
@@ -146,7 +162,7 @@ The Electron shell owns the window, tabs and side panel. The runtime drives tabs
 | Setting | Where |
 |---|---|
 | Port, profile and audit directory, OCR budget, plugins | `config/electron.json` |
-| Clipboard mode, pointer model, ambient pointer, plugins, start-page shortcuts | `data/electron-settings.json`, also written by the side panel |
+| Clipboard mode, pointer and keyboard models, ambient pointer, plugins, start-page shortcuts | `data/electron-settings.json`, also written by the side panel |
 | `WAYMARK_PORT`, `WAYMARK_PYTHON`, `WAYMARK_CONFIG`, `WAYMARK_ELECTRON_ARGS` | Environment |
 
 Example start-page shortcuts in `data/electron-settings.json`:
@@ -163,7 +179,7 @@ The control API listens on `127.0.0.1` only. It refuses cross-origin and non-JSO
 
 ## Status
 
-Early but used daily. Implemented: the desktop shell, the MCP tools above, pluggable pointer models, the isolated clipboard, the ambient pointer, the challenge pipeline, the ledger and the CLI. Next slots: typing cadence, scrolling, and slider or click-order challenge solvers. Planned: installers and auto-update, a full accessibility tree and iframe refs, file upload and download, screenshots, a password vault and profile import, a tamper-evident ledger, and an English UI (the UI is currently Chinese).
+Early but used daily. Implemented: the desktop shell, the MCP tools above, pluggable pointer and keyboard models, the isolated clipboard, the ambient pointer, the challenge pipeline, the ledger, the CLI and an eight-language UI. Next slots: action pacing, scrolling, and slider or click-order challenge solvers. Planned: installers and auto-update, a full accessibility tree and iframe refs, file upload and download, screenshots, a password vault and profile import, and a tamper-evident ledger.
 
 ## Development
 

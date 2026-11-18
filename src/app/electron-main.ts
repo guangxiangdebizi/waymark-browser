@@ -11,6 +11,12 @@ process.env.WAYMARK_CONFIG ??= process.env.AGENT_BROWSER_CONFIG ?? './config/ele
 const config = loadConfig();
 const t = (key: string, values?: unknown[]) => createTranslator(config.uiLanguage).t(key, values);
 app.setPath('userData', fromRoot(config.browser.userDataDir));
+// An occluded, covered or locked window must not demote its pages to hidden: a hidden page reports
+// visibilityState=hidden, pauses requestAnimationFrame and withholds rAF-aligned mousemove events while clicks and keys
+// still arrive. Agents keep working while the user is in other windows, so pages stay rendered as visible.
+app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
+app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
+app.commandLine.appendSwitch('disable-renderer-backgrounding');
 
 const API = `http://${config.server.host}:${config.server.port}`;
 const HOME_URL = `${API}/home`;

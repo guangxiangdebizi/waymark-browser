@@ -14,8 +14,12 @@ export interface AppConfig {
     automationViewport?: { width: number; height: number };
     ambientMouse: { enabled: boolean; minPauseMs: number; maxPauseMs: number; marginPx: number };
     mouse: { minSteps: number; maxSteps: number; minDelayMs: number; maxDelayMs: number };
+    /** Overrides for the human keyboard's timing model (see DEFAULT_TYPING). */
+    typing?: Partial<import('./browser/HumanKeyboard.js').TypingOptions>;
+    /** Per-step timeout for locating and acting on an element (default 5000 ms). */
+    actionTimeoutMs?: number;
   };
-  capabilities: { pointer: string; challengeOcr: string; clipboard: string; plugins?: PluginEntry[] };
+  capabilities: { pointer: string; keyboard?: string; challengeOcr: string; clipboard: string; plugins?: PluginEntry[] };
   audit: { directory: string; captureScreenshots: boolean };
   /** Start-page shortcuts; override per machine in the local settings file. */
   home?: { quickLinks?: Array<{ name: string; url: string; color?: string; icon?: string }> };
@@ -31,7 +35,7 @@ export interface AppConfig {
 }
 
 export interface PageSummary { id: number; url: string; title: string; active: boolean }
-export interface RefInfo { ref: string; role: string; name: string; snapshotId: string }
+export interface RefInfo { ref: string; role: string; name: string; snapshotId: string; line?: string }
 export interface SnapshotResult {
   id: string;
   pageId: number;

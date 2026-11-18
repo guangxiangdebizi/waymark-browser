@@ -86,15 +86,15 @@ export async function startServer(config: AppConfig, runtime: BrowserRuntime, ch
       if (typeof req.body?.ambientMouseEnabled === 'boolean') runtime.setAmbientMouseEnabled(req.body.ambientMouseEnabled);
       if (typeof req.body?.pointerProvider === 'string') runtime.setSlot('pointer', req.body.pointerProvider);
       for (const [slot, value] of Object.entries(req.body?.slots ?? {})) {
-        if (!['pointer', 'ocr', 'clipboard'].includes(slot) || typeof value !== 'string') throw new Error(`Unknown slot ${slot}`);
-        runtime.setSlot(slot as 'pointer' | 'ocr' | 'clipboard', value);
+        if (!['pointer', 'keyboard', 'ocr', 'clipboard'].includes(slot) || typeof value !== 'string') throw new Error(`Unknown slot ${slot}`);
+        runtime.setSlot(slot as 'pointer' | 'keyboard' | 'ocr' | 'clipboard', value);
       }
       const path = fromRoot(config.settingsFile);
       mkdirSync(dirname(path), { recursive: true });
       const current = existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : {};
       current.uiLanguage = uiLanguage ?? config.uiLanguage;
       const slots = runtime.slots();
-      current.capabilities = { ...current.capabilities, clipboard: slots.clipboard.active, pointer: slots.pointer.active, challengeOcr: slots.ocr.active };
+      current.capabilities = { ...current.capabilities, clipboard: slots.clipboard.active, pointer: slots.pointer.active, keyboard: slots.keyboard.active, challengeOcr: slots.ocr.active };
       current.browser = { ...current.browser, ambientMouse: { ...current.browser?.ambientMouse, enabled: runtime.getAmbientMouseState().enabled } };
       writeFileSync(path, JSON.stringify(current, null, 2));
       config.uiLanguage = current.uiLanguage;

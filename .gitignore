@@ -10,3 +10,5 @@ cli/build/
 *.egg-info/
 __pycache__/
 执行记录.md
+benchmarks/agentshield/instances/
+benchmarks/agentshield/AgentShield/

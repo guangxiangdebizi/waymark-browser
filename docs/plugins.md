@@ -5,6 +5,7 @@ Waymark keeps low-level work on the browser side, and each step of that work is 
 | Slot | Built-in | Config key | Plugin shape |
 |---|---|---|---|
 | `pointer` | `action.pointer.bezier` | `capabilities.pointer` | trajectory model (below) |
+| `keyboard` | `action.keyboard.human` (default), `action.keyboard.fast` | `capabilities.keyboard` | `type(page, text)` / `invoke({ page, text })` |
 | `ocr` | `challenge.ocr.ddddocr` | `capabilities.challengeOcr` | image in, text out |
 | `clipboard` | `action.clipboard.virtual`, `action.clipboard.system` | `capabilities.clipboard` | `read` / `write` / `invoke({ page, text })` / `clear` |
 
@@ -97,6 +98,18 @@ Answers longer than 128 characters are rejected. If the solver fails, the challe
     "challengeOcr": "challenge.ocr.ddddocr-beta" } }
 ```
 
+## Keyboard provider
+
+A `keyboard` provider enters text at the caret of the focused control. `fill`, `type` and the text part of every form action go through it. Export an object with a `manifest` (kind `action`) and `type(page, text)`, plus `invoke({ page, text })` calling the same thing. It appears in the keyboard slot automatically.
+
+The built-in `action.keyboard.human` presses each key for a log-normal hold time (median 105 ms), waits a log-normal gap between keys (median 120 ms) with longer pauses at word breaks and occasional thinking pauses, mistypes a neighbouring key about 2% of the time and corrects it with Backspace, and enters non-ASCII text such as Chinese through the input method rather than as individual keys. Tune it with `browser.typing` in the config:
+
+```json
+{ "browser": { "typing": { "dwellMedianMs": 105, "gapMedianMs": 120, "typoChance": 0.02 } } }
+```
+
+`action.keyboard.fast` is the pre-0.4 behaviour (instant key presses 8 ms apart). It is quicker, and much easier to tell apart from a person; see [the AgentShield benchmark](benchmark-agentshield.md).
+
 ## Clipboard provider
 
 Export an object with a `manifest` (kind `action`), plus `invoke({ page, text })` (paste into the focused element), `read()`, `write(text)` and `clear()`. It appears in the clipboard slot automatically.
@@ -107,4 +120,4 @@ Plugins run with your user's permissions inside the Waymark process, or as a chi
 
 ## Roadmap
 
-Planned slots: typing cadence, scrolling, and slider or click-order challenge solvers. Pull requests are welcome.
+Planned slots: scrolling, action pacing, and slider or click-order challenge solvers. Pull requests are welcome.

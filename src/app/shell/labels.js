@@ -56,7 +56,7 @@
     || String(text ?? '').replace(/^OCR unavailable or failed: /, t("本地 OCR 不可用或识别失败："));
   const KIND_LABEL = { text_image: t("文字图片验证码"), interactive: t("交互式验证"), unknown: t("未知类型验证") };
   const STATUS_LABEL = { success: t("成功"), failure: t("失败"), started: t("进行中"), info: t("记录") };
-  const ACT_ACTIONS = ['click', 'hover', 'fill', 'paste', 'copy', 'press', 'scroll', 'navigate', 'tabs.new', 'tabs.close', 'snapshot', 'read'];
+  const ACT_ACTIONS = ['click', 'hover', 'fill', 'select', 'type', 'paste', 'copy', 'press', 'scroll', 'navigate', 'tabs.new', 'tabs.close', 'snapshot', 'read'];
 
   function host(url) {
     try { const parsed = new URL(url); return parsed.protocol.startsWith('http') ? parsed.host + (parsed.pathname.length > 1 ? parsed.pathname : '') : url; }
@@ -90,6 +90,8 @@
       case 'click': return { icon: 'click', what: t("点击") + ref };
       case 'hover': return { icon: 'hover', what: t("悬停") + ref };
       case 'fill': return { icon: 'fill', what: t("填写 {0} 个输入框", [target.fields?.length ?? '']) };
+      case 'select': return { icon: 'fill', what: t("选择下拉选项") + ref };
+      case 'type': return { icon: 'key', what: t("输入 {0} 个字符", [target.valueLength ?? '']) + ref };
       case 'paste': return { icon: 'clip', what: t("粘贴 {0} 个字符", [target.valueLength ?? '']) + ref };
       case 'copy': return { icon: 'clip', what: t("复制内容") + ref };
       case 'press': return { icon: 'key', what: t("按键 ") + (target.key || '') };
@@ -105,6 +107,7 @@
       case 'session.named': return { icon: 'tag', what: t("开始会话 “") + (detail.name || event.session) + '”' };
       case 'settings.clipboard': return { icon: 'gear', what: t("剪贴板切换为") + ({ 'action.clipboard.virtual': t("隔离模式"), 'action.clipboard.system': t("系统全局") }[detail.provider] || ' ' + detail.provider) };
       case 'settings.pointer': return { icon: 'gear', what: t("鼠标轨迹模型切换为 ") + detail.provider };
+      case 'settings.keyboard': return { icon: 'gear', what: t("键盘输入切换为 ") + detail.provider };
       case 'settings.ocr': return { icon: 'gear', what: t("验证码识别切换为 ") + detail.provider };
       case 'settings.ambientMouse': return { icon: 'gear', what: t("自主鼠标游走") + ' · ' + (detail.enabled ? t("开启") : t("关闭")) };
       case 'settings.control': return { icon: 'gear', what: detail.paused ? t("用户暂停了 AI") : t("用户恢复了 AI") };

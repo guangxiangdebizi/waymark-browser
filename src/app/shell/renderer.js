@@ -236,9 +236,9 @@ ${esc(tab.url)}" style="flex-basis:${width}px">
     if (state.view !== 'settings') refreshPanel();
   }
   $('#pause-btn').addEventListener('click', () => post('/api/control', { paused: !state.status?.paused }, state.status?.paused ? t("已恢复 AI 自动化") : t("已暂停：AI 的所有操作会被拒绝")));
-  const SLOT_ORDER = [['pointer', t("鼠标轨迹"), t("点击 / 悬停 / 游走")], ['ocr', t("验证码识别"), t("本地优先，失败才交给 AI")], ['clipboard', t("剪贴板"), t("AI 复制粘贴走哪里")]];
+  const SLOT_ORDER = [['pointer', t("鼠标轨迹"), t("点击 / 悬停 / 游走")], ['keyboard', t("键盘输入"), t("打字节奏与纠错")], ['ocr', t("验证码识别"), t("本地优先，失败才交给 AI")], ['clipboard', t("剪贴板"), t("AI 复制粘贴走哪里")]];
   const BUILTIN_NAMES = {
-    'action.pointer.bezier': t("内置贝塞尔轨迹"), 'challenge.ocr.ddddocr': t("本地 ddddocr"),
+    'action.pointer.bezier': t("内置贝塞尔轨迹"), 'action.keyboard.human': t("拟人打字（默认）"), 'action.keyboard.fast': t("快速输入"), 'challenge.ocr.ddddocr': t("本地 ddddocr"),
     'action.clipboard.virtual': t("隔离（默认）"), 'action.clipboard.system': t("系统全局")
   };
   $('#slots').addEventListener('click', event => {

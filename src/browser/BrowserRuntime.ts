@@ -9,10 +9,11 @@ import type { CapabilityRegistry } from '../capabilities/CapabilityRegistry.js';
 import type { ClipboardCapability, ClipboardPasteInput } from '../capabilities/ClipboardProvider.js';
 import { AmbientMouseController } from './AmbientMouseController.js';
 import { CAPABILITY_SLOTS, fitsSlot, type CapabilitySlot } from '../capabilities/slots.js';
+import { HumanKeyboard, type KeyboardActor } from './HumanKeyboard.js';
 
 export interface ActInput {
   page: number;
-  kind: 'click' | 'fill' | 'press' | 'scroll' | 'hover' | 'paste' | 'copy';
+  kind: 'click' | 'fill' | 'press' | 'scroll' | 'hover' | 'paste' | 'copy' | 'select' | 'type';
   ref?: string;
   fields?: Array<{ ref: string; value: string }>;
   value?: string;
@@ -40,6 +41,9 @@ export class BrowserRuntime {
   private clipboard: ClipboardCapability;
   private busyPages = new Set<number>();
   private ambient: AmbientMouseController;
+  private keyboard: KeyboardActor;
+  /** The tab the agent last operated; ambient movement follows it rather than the most recently opened tab. */
+  private agentPage = 0;
   private guard: (pageId: number) => void = () => undefined;
   private paused = false;
   private settledHook: (pageId: number) => Promise<unknown> = async () => null;
@@ -48,9 +52,19 @@ export class BrowserRuntime {
     this.driver = driver;
     this.actor = capabilities.get<PointerInput, void>(config.capabilities.pointer) as unknown as PointerActor;
     this.clipboard = capabilities.get<ClipboardPasteInput, void>(config.capabilities.clipboard) as ClipboardCapability;
+    // Configs written before the keyboard slot existed (or built by embedders) get the human keyboard.
+    config.capabilities.keyboard ??= 'action.keyboard.human';
+    this.keyboard = (capabilities.list().some(item => item.id === config.capabilities.keyboard)
+      ? capabilities.get(config.capabilities.keyboard)
+      : new HumanKeyboard(config.browser.typing)) as unknown as KeyboardActor;
     this.ambient = new AmbientMouseController(
       config.browser.ambientMouse,
-      () => { const page = this.pages.get(this.activePage); return page ? { id: this.activePage, page } : undefined; },
+      () => {
+        const operated = this.pages.get(this.agentPage);
+        const id = operated && !operated.isClosed() ? this.agentPage : this.activePage;
+        const page = this.pages.get(id);
+        return page ? { id, page } : undefined;
+      },
       pageId => this.busyPages.has(pageId),
       pageId => this.assertAllowed(pageId),
       () => this.actor,
@@ -131,6 +145,7 @@ export class BrowserRuntime {
   async navigateAction(pageId: number, action: 'url' | 'back' | 'forward' | 'reload', url?: string): Promise<unknown> {
     await this.launch();
     this.assertAllowed(pageId);
+    this.agentPage = pageId;
     const page = this.page(pageId);
     const before = await this.pageState(page);
     const started = this.audit.record({ pageId, action: 'navigate', target: { action, url }, before, status: 'started' });
@@ -142,6 +157,7 @@ export class BrowserRuntime {
       else if (action === 'forward') await page.goForward({ waitUntil: 'domcontentloaded' });
       else await page.reload({ waitUntil: 'domcontentloaded' });
       await page.waitForTimeout(this.config.browser.settleMs);
+      this.refs.delete(pageId);
       const after = await this.pageState(page);
       const event = this.audit.record({ pageId, action: 'navigate', target: { action, url }, before, after, durationMs: Date.now() - start, status: 'success' });
       return { pageId, ...after, traceId: event.id, challenge: await this.settledHook(pageId) };
@@ -154,46 +170,117 @@ export class BrowserRuntime {
   async snapshot(pageId: number): Promise<SnapshotResult> {
     await this.launch();
     this.assertAllowed(pageId);
+    this.agentPage = pageId;
     const page = this.page(pageId);
+    const { saved, refs } = await this.capture(pageId, page);
+    this.audit.record({ pageId, action: 'snapshot', target: { snapshotId: saved.id, refCount: refs.size }, basisSnapshotId: saved.id, basisSnapshotHash: saved.hash, before: { url: saved.url, title: saved.title }, after: { url: saved.url, title: saved.title }, status: 'success' });
+    return saved;
+  }
+
+  /**
+   * Collect visible interactive elements. Refs are stamped on the element and kept while it exists, so a ref from an
+   * earlier snapshot stays valid and a later capture can report exactly which elements appeared or disappeared.
+   */
+  private async capture(pageId: number, page: Page, unchangedFrom?: Map<string, RefInfo>): Promise<{ saved: SnapshotResult; refs: Map<string, RefInfo> }> {
     const data = await page.evaluate(`(() => {
-      document.querySelectorAll('[data-agent-ref]').forEach(el => el.removeAttribute('data-agent-ref'));
+      // Visible to a person: has size, no transparent/hidden ancestor, not clipped away by an overflow:hidden|clip ancestor.
+      // Scroll containers (overflow:auto|scroll) do not count as clipping: their content is reachable by scrolling.
       const visible = (el) => {
-        const style = getComputedStyle(el);
         const rect = el.getBoundingClientRect();
-        return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0;
+        if (rect.width <= 1 || rect.height <= 1) return false;
+        if (el.checkVisibility && !el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })) return false;
+        const style = getComputedStyle(el);
+        if (style.visibility === 'hidden' || style.display === 'none' || Number(style.opacity) <= 0.05) return false;
+        for (let p = el.parentElement; p && p !== document.body && p !== document.documentElement; p = p.parentElement) {
+          const ps = getComputedStyle(p);
+          if (!/hidden|clip/.test(ps.overflow + ps.overflowX + ps.overflowY)) continue;
+          const pr = p.getBoundingClientRect();
+          if (Math.min(rect.right, pr.right) - Math.max(rect.left, pr.left) <= 1 || Math.min(rect.bottom, pr.bottom) - Math.max(rect.top, pr.top) <= 1) return false;
+        }
+        return true;
       };
-      const nameOf = (el) => (
-        el.getAttribute('aria-label') || el.getAttribute('title') ||
+      const clean = (text) => (text || '').replace(/\\s+/g, ' ').trim().slice(0, 180);
+      const labelOf = (el) => {
+        const by = el.getAttribute('aria-labelledby');
+        if (by) { const text = by.split(/\\s+/).map(id => document.getElementById(id)?.innerText || '').join(' '); if (clean(text)) return clean(text); }
+        if (el.labels && el.labels.length) return clean(Array.from(el.labels).map(l => l.innerText).join(' '));
+        const wrap = el.closest('label');
+        return wrap ? clean(wrap.innerText) : '';
+      };
+      const nameOf = (el) => clean(
+        el.getAttribute('aria-label') || labelOf(el) || el.getAttribute('title') ||
         (el instanceof HTMLInputElement ? el.placeholder || (['button', 'submit', 'reset'].includes(el.type) ? el.value : '') : '') ||
-        el.textContent || ''
-      ).replace(/\\s+/g, ' ').trim().slice(0, 180);
-      const selector = 'a[href],button,input,textarea,select,[role="button"],[role="link"],[role="textbox"],[role="checkbox"],[role="tab"],[contenteditable="true"]';
+        (el instanceof HTMLSelectElement ? '' : el.textContent) || el.getAttribute('name') || ''
+      );
+      const stateOf = (el) => {
+        if (el instanceof HTMLSelectElement) {
+          const options = Array.from(el.options).filter(o => !o.disabled).map(o => clean(o.label || o.text)).filter(Boolean);
+          const shown = options.slice(0, 15).map(o => JSON.stringify(o)).join(', ') + (options.length > 15 ? ', +' + (options.length - 15) + ' more' : '');
+          return ' selected=' + JSON.stringify(clean(el.selectedOptions[0]?.label || '')) + ' options=[' + shown + ']';
+        }
+        if (el instanceof HTMLInputElement && ['checkbox', 'radio'].includes(el.type)) return el.checked ? ' checked' : ' unchecked';
+        if ((el instanceof HTMLInputElement && !['button', 'submit', 'reset', 'image'].includes(el.type)) || el instanceof HTMLTextAreaElement) return el.value ? ' filled' : ' empty';
+        const expanded = el.getAttribute('aria-expanded');
+        return expanded ? ' expanded=' + expanded : '';
+      };
+      const selector = 'a[href],button,input,textarea,select,summary,[role="button"],[role="link"],[role="textbox"],[role="checkbox"],[role="radio"],[role="switch"],[role="tab"],[role="combobox"],[role="option"],[role="menuitem"],[contenteditable="true"]';
+      window.__agentRefSeq = window.__agentRefSeq || 0;
       const items = [];
-      let index = 0;
       for (const el of Array.from(document.querySelectorAll(selector))) {
         if (!visible(el)) continue;
-        const ref = 'e' + (++index);
-        el.setAttribute('data-agent-ref', ref);
+        if (el.type === 'hidden') continue;
+        let ref = el.getAttribute('data-agent-ref');
+        if (!ref) { ref = 'e' + (++window.__agentRefSeq); el.setAttribute('data-agent-ref', ref); }
         const role = el.getAttribute('role') || (el instanceof HTMLInputElement ? el.type : el.tagName.toLowerCase());
-        items.push({ ref, role, name: nameOf(el) });
+        items.push({ ref, role, name: nameOf(el), state: stateOf(el) });
       }
       const headings = Array.from(document.querySelectorAll('h1,h2,h3')).filter(visible)
         .map(el => el.tagName.toLowerCase() + ': ' + nameOf(el)).slice(0, 60);
       return { items, headings };
-    })()`) as { items: Array<{ ref: string; role: string; name: string }>; headings: string[] };
+    })()`) as { items: Array<{ ref: string; role: string; name: string; state: string }>; headings: string[] };
     const id = randomUUID();
     const refs = new Map<string, RefInfo>();
     const lines = [`Page: ${await page.title()}`, `URL: ${page.url()}`, `Snapshot: ${id}`, '', ...data.headings, ''];
     for (const item of data.items) {
-      const info = { ...item, snapshotId: id };
-      refs.set(item.ref, info);
-      lines.push(`[ref=${item.ref}] ${item.role} ${JSON.stringify(item.name)}`);
+      const line = `[ref=${item.ref}] ${item.role} ${JSON.stringify(item.name)}${item.state}`;
+      // An element the agent is not told about again keeps the snapshot it was last observed in (trace basis).
+      const seen = unchangedFrom?.get(item.ref);
+      refs.set(item.ref, { ref: item.ref, role: item.role, name: item.name, snapshotId: seen && seen.line === line ? seen.snapshotId : id, line });
+      lines.push(line);
     }
     this.refs.set(pageId, refs);
     const saved = this.audit.saveSnapshot({ id, pageId, url: page.url(), title: await page.title(), text: lines.join('\n'), refs: Object.fromEntries(refs) });
     this.snapshotHashes.set(id, saved.hash);
-    this.audit.record({ pageId, action: 'snapshot', target: { snapshotId: id, refCount: refs.size }, basisSnapshotId: id, basisSnapshotHash: saved.hash, before: { url: saved.url, title: saved.title }, after: { url: saved.url, title: saved.title }, status: 'success' });
-    return saved;
+    return { saved, refs };
+  }
+
+  /** Wait until the DOM stops changing (quietMs without mutations) and finite CSS animations/transitions end, bounded by maxMs. */
+  private async settle(page: Page, quietMs = 200, maxMs = 2000): Promise<void> {
+    await page.evaluate(`new Promise(resolve => {
+      let timer, finished = false;
+      const done = () => {
+        if (finished) return; finished = true; observer.disconnect(); clearTimeout(cap); clearTimeout(timer);
+        const running = (document.getAnimations ? document.getAnimations() : [])
+          .filter(a => a.playState === 'running' && a.effect && Number.isFinite(a.effect.getComputedTiming().endTime));
+        Promise.race([Promise.all(running.map(a => a.finished.catch(() => null))), new Promise(r => setTimeout(r, 1500))]).then(() => resolve(true));
+      };
+      const observer = new MutationObserver(() => { clearTimeout(timer); timer = setTimeout(done, ${quietMs}); });
+      observer.observe(document.documentElement, { subtree: true, childList: true, attributes: true, characterData: true });
+      timer = setTimeout(done, ${quietMs}); const cap = setTimeout(done, ${maxMs});
+    })`).catch(() => undefined);
+  }
+
+  /** After an action: what appeared, disappeared or changed state, so the agent rarely needs a separate snapshot. */
+  private async changes(pageId: number, page: Page, previous: Map<string, RefInfo> | undefined, beforeUrl: string): Promise<unknown> {
+    const navigated = page.url() !== beforeUrl;
+    const { saved, refs } = await this.capture(pageId, page, navigated ? undefined : previous);
+    const full = () => { for (const info of refs.values()) info.snapshotId = saved.id; return saved.text; };
+    if (!previous || navigated) return { navigated, snapshot: full() };
+    const added = [...refs.values()].filter(r => !previous.has(r.ref)).map(r => r.line);
+    const removed = [...previous.keys()].filter(ref => !refs.has(ref));
+    const changed = [...refs.values()].filter(r => previous.has(r.ref) && previous.get(r.ref)!.line !== r.line).map(r => r.line);
+    if (added.length > 80) return { snapshotId: saved.id, note: `${added.length} elements appeared; full snapshot follows`, snapshot: full() };
+    return { snapshotId: saved.id, added, removed, changed };
   }
 
   async read(pageId: number, limit?: number, format: 'text' | 'markdown' | 'html' = 'text'): Promise<{ pageId: number; url: string; title: string; text: string; sourceLength: number; truncated: boolean }> {
@@ -211,8 +298,10 @@ export class BrowserRuntime {
   async act(input: ActInput): Promise<unknown> {
     await this.launch();
     this.assertAllowed(input.page);
+    this.agentPage = input.page;
     const page = this.page(input.page);
     const before = await this.pageState(page);
+    const previous = this.refs.get(input.page);
     const basis = this.basisFor(input);
     const target = this.safeTarget(input);
     const capabilities = this.actionCapabilities(input);
@@ -221,32 +310,34 @@ export class BrowserRuntime {
     this.busyPages.add(input.page);
     try {
       if (input.kind === 'click' || input.kind === 'hover') {
-        const locator = this.locator(input.page, required(input.ref, 'ref'));
-        await locator.scrollIntoViewIfNeeded();
-        const box = await locator.boundingBox();
-        if (!box) throw new Error('Target is not visible');
-        const point = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+        const point = await this.pointOf(input.page, required(input.ref, 'ref'));
         if (input.kind === 'click') await this.actor.invoke({ page, x: point.x, y: point.y });
         else await this.actor.move({ page, x: point.x, y: point.y }, 'hover');
       } else if (input.kind === 'fill') {
-        if (!input.fields?.length) throw new Error('fields is required for fill');
-        for (const field of input.fields) {
-          const locator = this.locator(input.page, field.ref);
-          await locator.scrollIntoViewIfNeeded();
-          await locator.click();
-          await page.keyboard.press('Control+A');
-          await page.keyboard.type(field.value, { delay: 8 });
+        if (!input.fields?.length) throw new Error('fields is required for fill: [{ ref, value }]');
+        for (const field of input.fields) await this.fillField(input.page, page, field.ref, field.value);
+      } else if (input.kind === 'select') {
+        await this.choose(input.page, page, required(input.ref, 'ref'), required(input.value, 'value'));
+      } else if (input.kind === 'type') {
+        const value = required(input.value, 'value');
+        const kind = input.ref ? await this.kindOf(input.page, input.ref) : undefined;
+        // Selects, toggles and date-like inputs cannot take keystrokes meaningfully: route them through fill's dispatch.
+        if (input.ref && kind && (kind.tag === 'SELECT' || ['checkbox', 'radio', 'date', 'time', 'datetime-local', 'month', 'week', 'color', 'range'].includes(kind.type))) await this.fillField(input.page, page, input.ref, value);
+        else {
+          if (input.ref) await this.focusText(input.page, page, input.ref, false);
+          await this.keyboard.type(page, value);
         }
       } else if (input.kind === 'paste') {
-        const locator = this.locator(input.page, required(input.ref, 'ref'));
-        await locator.click();
+        await this.focusText(input.page, page, required(input.ref, 'ref'), false);
         await this.clipboard.invoke({ page, text: input.value ?? await this.clipboard.read() });
       } else if (input.kind === 'copy') {
         const locator = this.locator(input.page, required(input.ref, 'ref'));
         const text = await locator.inputValue().catch(async () => await locator.textContent() ?? '');
         await this.clipboard.write(text);
       } else if (input.kind === 'press') {
-        await page.keyboard.press(required(input.key, 'key'));
+        const key = required(input.key, 'key');
+        if (key.length > 1 && !/^([A-Z][A-Za-z0-9]*|F\d+)(\+([A-Z][A-Za-z0-9]*|.))*$/.test(key)) throw new Error(`press takes a key name such as Enter, Tab, ArrowDown or Control+A; to enter text use kind "type" or "fill"`);
+        await page.keyboard.press(key);
       } else if (input.kind === 'scroll') {
         const amount = (input.amount ?? 3) * 160;
         const delta = input.direction === 'up' || input.direction === 'left' ? -amount : amount;
@@ -255,13 +346,81 @@ export class BrowserRuntime {
       await page.waitForTimeout(this.config.browser.settleMs);
       const readyState = await page.evaluate('document.readyState').catch(() => null);
       if (readyState === 'loading') await page.waitForLoadState('domcontentloaded', { timeout: 5000 }).catch(() => undefined);
+      await this.settle(page);
       const after = await this.pageState(page);
       const event = this.audit.record({ pageId: input.page, action: input.kind, target, basisSnapshotId: basis?.snapshotId, basisSnapshotHash: basis?.hash, capabilities, before, after, durationMs: Date.now() - start, status: 'success' });
-      return { ok: true, traceId: event.id, before, after, challenge: await this.settledHook(input.page) };
+      const changes = input.kind === 'copy' ? undefined : await this.changes(input.page, page, previous, before.url).catch(() => undefined);
+      return { ok: true, traceId: event.id, before, after, changes, challenge: await this.settledHook(input.page) };
     } catch (error) {
       this.audit.record({ pageId: input.page, action: input.kind, target, basisSnapshotId: basis?.snapshotId, basisSnapshotHash: basis?.hash, capabilities, before, durationMs: Date.now() - start, status: 'failure', error: message(error) });
       throw error;
     } finally { this.busyPages.delete(input.page); }
+  }
+
+  private timeout(): number { return this.config.browser.actionTimeoutMs ?? 5000; }
+
+  private async pointOf(pageId: number, ref: string): Promise<{ x: number; y: number }> {
+    const locator = this.locator(pageId, ref);
+    await locator.scrollIntoViewIfNeeded({ timeout: this.timeout() }).catch(() => undefined);
+    const box = await locator.boundingBox({ timeout: this.timeout() });
+    if (!box) throw new Error(`Target ${ref} is not visible; take a snapshot to see what is on screen`);
+    return { x: box.x + box.width * (0.3 + Math.random() * 0.4), y: box.y + box.height * (0.3 + Math.random() * 0.4) };
+  }
+
+  private async kindOf(pageId: number, ref: string): Promise<{ tag: string; type: string; role: string; checked: boolean }> {
+    return await this.locator(pageId, ref).evaluate(el => ({
+      tag: el.tagName, type: (el as HTMLInputElement).type ?? '', role: el.getAttribute('role') ?? '', checked: Boolean((el as HTMLInputElement).checked)
+    }), undefined, { timeout: this.timeout() });
+  }
+
+  /** Click into a text control, clear it if asked, leaving the caret ready for typing. */
+  private async focusText(pageId: number, page: Page, ref: string, clear: boolean): Promise<void> {
+    const point = await this.pointOf(pageId, ref);
+    await this.actor.invoke({ page, x: point.x, y: point.y });
+    if (clear) { await page.keyboard.press('Control+A'); await page.keyboard.press('Backspace'); }
+  }
+
+  /** fill dispatches by control type: text-like controls are typed, selects chosen, checkboxes/radios toggled, date-like set. */
+  private async fillField(pageId: number, page: Page, ref: string, value: string): Promise<void> {
+    const kind = await this.kindOf(pageId, ref);
+    if (kind.tag === 'SELECT' || kind.role === 'combobox' && kind.tag !== 'INPUT') return await this.choose(pageId, page, ref, value);
+    if (kind.type === 'checkbox' || kind.type === 'radio' || kind.role === 'checkbox' || kind.role === 'radio' || kind.role === 'switch') {
+      const want = kind.type === 'radio' || kind.role === 'radio' ? true : !/^(false|0|no|off|unchecked|)$/i.test(value.trim());
+      if (want !== kind.checked) { const point = await this.pointOf(pageId, ref); await this.actor.invoke({ page, x: point.x, y: point.y }); }
+      return;
+    }
+    if (['date', 'time', 'datetime-local', 'month', 'week', 'color', 'range'].includes(kind.type)) {
+      const point = await this.pointOf(pageId, ref);
+      await this.actor.move({ page, x: point.x, y: point.y });
+      await this.locator(pageId, ref).fill(value, { timeout: this.timeout() });
+      return;
+    }
+    if (kind.type === 'file') throw new Error('File inputs need an upload action; fill cannot set files');
+    await this.focusText(pageId, page, ref, true);
+    await this.keyboard.type(page, value);
+  }
+
+  /** Choose an option by its visible label (or value): native <select>, or a custom combobox opened and picked by pointer. */
+  private async choose(pageId: number, page: Page, ref: string, value: string): Promise<void> {
+    const locator = this.locator(pageId, ref);
+    const kind = await this.kindOf(pageId, ref);
+    const point = await this.pointOf(pageId, ref);
+    if (kind.tag === 'SELECT') {
+      await this.actor.move({ page, x: point.x, y: point.y });
+      const options = await locator.evaluate(el => Array.from((el as HTMLSelectElement).options).map(o => ({ label: (o.label || o.text).trim(), value: o.value })));
+      const wanted = value.trim().toLowerCase();
+      const match = options.find(o => o.label.toLowerCase() === wanted || o.value.toLowerCase() === wanted)
+        ?? options.find(o => o.label.toLowerCase().includes(wanted) && wanted.length > 0);
+      if (!match) throw new Error(`No option "${value}" in ${ref}; options: ${options.map(o => o.label).filter(Boolean).slice(0, 20).join(' | ')}`);
+      await locator.selectOption({ value: match.value }, { timeout: this.timeout() });
+      return;
+    }
+    await this.actor.invoke({ page, x: point.x, y: point.y });
+    await this.settle(page, 150, 1500);
+    const option = page.getByRole('option', { name: value }).or(page.getByRole('menuitem', { name: value })).first();
+    const box = await option.boundingBox({ timeout: this.timeout() }).catch(() => null);
+    if (!box) throw new Error(`Opened ${ref} but no visible option named "${value}"; take a snapshot to read the options`);
+    await this.actor.invoke({ page, x: box.x + box.width / 2, y: box.y + box.height / 2 });
   }
 
   /** User-held control lease: while paused every agent read/write and ambient movement is refused. */
@@ -304,13 +463,14 @@ export class BrowserRuntime {
     const provider = this.capabilities.get(id);
     if (!fitsSlot(slot, provider)) throw new Error(`${id} cannot fill the ${slot} slot`);
     if (slot === 'pointer') { this.actor = provider as unknown as PointerActor; this.config.capabilities.pointer = id; }
+    else if (slot === 'keyboard') { this.keyboard = provider as unknown as KeyboardActor; this.config.capabilities.keyboard = id; }
     else if (slot === 'clipboard') { this.clipboard = provider as unknown as ClipboardCapability; this.config.capabilities.clipboard = id; }
     else this.config.capabilities.challengeOcr = id;
     this.audit.record({ action: `settings.${slot}`, status: 'info', detail: { provider: id } });
   }
 
   private activeId(slot: CapabilitySlot): string {
-    return slot === 'pointer' ? this.config.capabilities.pointer : slot === 'clipboard' ? this.config.capabilities.clipboard : this.config.capabilities.challengeOcr;
+    return slot === 'pointer' ? this.config.capabilities.pointer : slot === 'keyboard' ? this.config.capabilities.keyboard ?? 'action.keyboard.human' : slot === 'clipboard' ? this.config.capabilities.clipboard : this.config.capabilities.challengeOcr;
   }
 
   getPointerProviderId(): string { return this.config.capabilities.pointer; }
@@ -390,14 +550,15 @@ export class BrowserRuntime {
   }
 
   private actionCapabilities(input: ActInput): Array<{ id: string; version: string }> {
-    if (input.kind === 'click' || input.kind === 'hover') return [this.actor.manifest];
+    if (input.kind === 'click' || input.kind === 'hover' || input.kind === 'select') return [this.actor.manifest];
+    if (input.kind === 'fill' || input.kind === 'type') return [this.actor.manifest, this.keyboard.manifest];
     if (input.kind === 'paste' || input.kind === 'copy') return [this.clipboard.manifest];
     return [];
   }
 
   private safeTarget(input: ActInput): unknown {
     if (input.kind === 'fill') return { fields: input.fields?.map(f => ({ ref: f.ref, valueLength: f.value.length })) };
-    if (input.kind === 'paste') return { ref: input.ref, valueLength: input.value?.length };
+    if (input.kind === 'paste' || input.kind === 'type' || input.kind === 'select') return { ref: input.ref, valueLength: input.value?.length };
     if (input.kind === 'copy') return { ref: input.ref };
     return { ref: input.ref, key: input.key, direction: input.direction, amount: input.amount };
   }

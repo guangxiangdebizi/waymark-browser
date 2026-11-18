@@ -26,6 +26,7 @@
   },
   "capabilities": {
     "pointer": "action.pointer.bezier",
+    "keyboard": "action.keyboard.human",
     "challengeOcr": "challenge.ocr.ddddocr",
     "clipboard": "action.clipboard.virtual"
   },
