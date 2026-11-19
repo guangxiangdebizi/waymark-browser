@@ -6,6 +6,8 @@ Waymark keeps low-level work on the browser side, and each step of that work is 
 |---|---|---|---|
 | `pointer` | `action.pointer.bezier` | `capabilities.pointer` | trajectory model (below) |
 | `keyboard` | `action.keyboard.human` (default), `action.keyboard.fast` | `capabilities.keyboard` | `type(page, text)` / `invoke({ page, text })` |
+| `pacing` | `action.pacing.human` (default), `action.pacing.off` | `capabilities.pacing` | `delay(context)` → ms |
+| `idle` | `idle.adaptive` (default), `idle.drift` | `capabilities.idle` | `plan(scene)` → steps |
 | `ocr` | `challenge.ocr.ddddocr` | `capabilities.challengeOcr` | image in, text out |
 | `clipboard` | `action.clipboard.virtual`, `action.clipboard.system` | `capabilities.clipboard` | `read` / `write` / `invoke({ page, text })` / `clear` |
 
@@ -110,6 +112,61 @@ The built-in `action.keyboard.human` presses each key for a log-normal hold time
 
 `action.keyboard.fast` is the pre-0.4 behaviour (instant key presses 8 ms apart). It is quicker, and much easier to tell apart from a person; see [the AgentShield benchmark](benchmark-agentshield.md).
 
+## Pacing model
+
+Before each agent step starts, the pacing model returns how long to wait. Export `{ manifest, delay(context) }`; it appears in the pacing slot automatically. Waymark clamps the answer to 0–8000 ms, writes it to the ledger entry as `pacedMs`, and treats a model that throws as 0 ms, so pacing never blocks the agent.
+
+`context` never contains the page:
+
+| Field | Meaning |
+|---|---|
+| `kind` | the `act` kind (`click`, `fill`, `type`, `select`, …), `navigate`, or `field` for the pause between fields of one `fill` |
+| `sinceObservedMs` | time since the agent received this page's state (the result of its previous call) |
+| `shownLines` | lines the agent was shown in that result, a rough measure of how much a person would read |
+| `commit` | the target looks like a commit step: submit, next, confirm, pay, sign in |
+| `index` | field position within a `fill` |
+
+The built-in `action.pacing.human` adds what a person would need: a log-normal reaction per kind (about 0.85 s before a click, 1 s before a fill), 90 ms reading time per line shown (capped at 2.2 s), 0.3–0.9 s extra before a commit step and about 0.5 s between fields. It subtracts the time the agent already spent, so an LLM that takes several seconds per step waits for nothing and a fast one is slowed to a human pace. Tune it with `browser.pacing`:
+
+```json
+{ "browser": { "pacing": { "reactionMs": { "click": 700 }, "readPerLineMs": 60, "fieldGapMs": 400 } } }
+```
+
+`action.pacing.off` starts every step immediately (the pre-0.5 behaviour). See [`examples/plugins/pacing-fixed.mjs`](../examples/plugins/pacing-fixed.mjs).
+
+## Idle planner
+
+While the agent thinks, the idle planner decides what the pointer does. Export `{ manifest, plan(scene) }` returning a list of steps; it appears in the idle slot automatically. The **自主鼠标游走** switch turns idle behaviour on and off; this slot decides what it does.
+
+`scene` describes the page without exposing it: viewport and pointer position, `sinceAgentMs`, scroll position, `spots` (points on plain background or text with nothing interactive under them), `text` (visible text blocks), `fresh` (elements that appeared in the agent's last result), `links` (same-origin links that can be visited and returned from) and `allow`, which says whether the page allows idle clicks, scrolls and visits right now and why not.
+
+Steps:
+
+```json
+[{ "type": "move", "x": 400, "y": 300 }, { "type": "pause", "ms": 600 }, { "type": "click", "x": 400, "y": 300 },
+ { "type": "scroll", "dy": 240 }, { "type": "visit", "link": 0, "dwellMs": 2500 }]
+```
+
+Waymark runs the steps through the pointer slot and checks each one again before running it: a click only lands on page background, a visit only follows a link that is still under the pointer and not a risky one (sign out, delete, pay, submit, download and similar). The page decides what is allowed. Pages that look like part of a flow (checkout, sign-in, applications, appointments, payments), sites listed in `browser.ambientMouse.protectedSites`, pages the agent is waiting on and pages with unsaved input, sensitive fields, an open popup or a focused field are never left. Flow pages, protected sites, open popups and focused fields get no idle clicks either.
+
+Whatever the planner did is undone before the agent's next call. A call that arrives mid-step interrupts it, waits until the page is back, and then runs. A visit goes back to the page the agent left: from the back/forward cache with every field and ref intact, or rebuilt with the agent's refs stamped again. If a page cannot be brought back intact, its origin is never visited from again in that session. Ledger entries are `mouse.ambient` (pointer only), `idle.click`, `idle.scroll` and `idle.visit`, with the steps taken and how the page was restored; they are kept out of the agent's activity counts.
+
+The built-in `idle.adaptive` looks at what just appeared, sweeps the pointer along text as if reading, rests, clicks empty page, scrolls a little and back, and now and then (at most once every 45 s) opens a link for a few seconds. After two minutes without an agent call it only drifts now and then. `idle.drift` is the pre-0.5 behaviour: the pointer drifts over page background and never clicks. See [`examples/plugins/idle-reader.mjs`](../examples/plugins/idle-reader.mjs).
+
+```json
+{ "browser": { "ambientMouse": { "protectedSites": ["mail.example.com", "/bank\\./"] } } }
+```
+
+## External pacing and idle processes
+
+Pacing models and idle planners can also run as processes, with the same JSON-lines protocol as pointer models. Set `kind` to `pacing` or `idle`:
+
+```json
+{ "capabilities": { "plugins": [{ "id": "action.pacing.mine", "kind": "pacing", "command": ["python", "pacing.py"] }], "pacing": "action.pacing.mine" } }
+```
+
+A pacing request is `{ "id": 1, "context": { ... } }` and the answer `{ "id": 1, "delayMs": 900 }`. An idle request is `{ "id": 2, "scene": { ... } }` and the answer `{ "id": 2, "steps": [ ... ] }`.
+
 ## Clipboard provider
 
 Export an object with a `manifest` (kind `action`), plus `invoke({ page, text })` (paste into the focused element), `read()`, `write(text)` and `clear()`. It appears in the clipboard slot automatically.
@@ -120,4 +177,4 @@ Plugins run with your user's permissions inside the Waymark process, or as a chi
 
 ## Roadmap
 
-Planned slots: scrolling, action pacing, and slider or click-order challenge solvers. Pull requests are welcome.
+Planned slots: scrolling, and slider or click-order challenge solvers. Pull requests are welcome.

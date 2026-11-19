@@ -35,6 +35,8 @@ try {
   assert.equal(plain.status, 415, 'non-JSON cockpit write must be refused');
   const settingsResponse = await fetch('http://127.0.0.1:9510/api/settings').then(r => r.json());
   assert.equal(settingsResponse.ambientMouse.enabled, true);
+  assert.equal(settingsResponse.slots.pacing.active, 'action.pacing.human');
+  assert.equal(settingsResponse.slots.idle.active, 'idle.adaptive');
   const created = unwrap(await client.callTool({ name: 'tabs', arguments: { action: 'new', url: `http://127.0.0.1:${address.port}` } }));
   const control = (paused: boolean) => fetch('http://127.0.0.1:9510/api/control', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ paused }) }).then(r => r.json());
   assert.equal((await control(true)).paused, true);
@@ -75,7 +77,8 @@ try {
   let ambient: any;
   while (Date.now() - closedAt < 15000) {
     const events = unwrap(await client.callTool({ name: 'audit', arguments: { action: 'list', limit: 200 } }));
-    ambient = events.find(event => event.action === 'mouse.ambient' && event.pageId === homeTab.id && Date.parse(event.timestamp) >= closedAt);
+    // The start page is a Waymark page: idle behaviour may move and scroll there, but never clicks or leaves it.
+    ambient = events.find(event => (event.action === 'mouse.ambient' || event.action.startsWith('idle.')) && event.pageId === homeTab.id && Date.parse(event.timestamp) >= closedAt);
     if (ambient) break;
     await new Promise(resolve => setTimeout(resolve, 250));
   }

@@ -7,7 +7,9 @@ import { AuditLog } from '../audit/AuditLog.js';
 import type { PointerActor, PointerInput } from './InputActor.js';
 import type { CapabilityRegistry } from '../capabilities/CapabilityRegistry.js';
 import type { ClipboardCapability, ClipboardPasteInput } from '../capabilities/ClipboardProvider.js';
-import { AmbientMouseController } from './AmbientMouseController.js';
+import { IdleController, type IdlePlanner } from './IdleController.js';
+import { AdaptivePlanner } from './IdlePlanners.js';
+import { HumanPacing, clampDelay, looksLikeCommit, type PacingContext, type PacingModel } from './Pacing.js';
 import { CAPABILITY_SLOTS, fitsSlot, type CapabilitySlot } from '../capabilities/slots.js';
 import { HumanKeyboard, type KeyboardActor } from './HumanKeyboard.js';
 
@@ -40,8 +42,18 @@ export class BrowserRuntime {
   private actor: PointerActor;
   private clipboard: ClipboardCapability;
   private busyPages = new Set<number>();
-  private ambient: AmbientMouseController;
+  private ambient: IdleController;
   private keyboard: KeyboardActor;
+  private pacing: PacingModel;
+  private idle: IdlePlanner;
+  /** When the agent last received each page's state, how many lines it was shown, and which refs were new. */
+  private observedAt = new Map<number, number>();
+  private shown = new Map<number, number>();
+  private fresh = new Map<number, string[]>();
+  /** Pages idle behaviour must not leave, and origins where an idle visit could not come back intact. */
+  private pinnedPages = new Map<number, string>();
+  private waiting = new Set<number>();
+  private unrestorable = new Map<string, string>();
   /** The tab the agent last operated; ambient movement follows it rather than the most recently opened tab. */
   private agentPage = 0;
   private guard: (pageId: number) => void = () => undefined;
@@ -57,19 +69,69 @@ export class BrowserRuntime {
     this.keyboard = (capabilities.list().some(item => item.id === config.capabilities.keyboard)
       ? capabilities.get(config.capabilities.keyboard)
       : new HumanKeyboard(config.browser.typing)) as unknown as KeyboardActor;
-    this.ambient = new AmbientMouseController(
-      config.browser.ambientMouse,
-      () => {
+    config.capabilities.pacing ??= 'action.pacing.human';
+    config.capabilities.idle ??= 'idle.adaptive';
+    this.pacing = (capabilities.list().some(item => item.id === config.capabilities.pacing)
+      ? capabilities.get(config.capabilities.pacing) : new HumanPacing(config.browser.pacing)) as unknown as PacingModel;
+    this.idle = (capabilities.list().some(item => item.id === config.capabilities.idle)
+      ? capabilities.get(config.capabilities.idle) : new AdaptivePlanner()) as unknown as IdlePlanner;
+    this.ambient = new IdleController(config.browser.ambientMouse, {
+      target: () => {
         const operated = this.pages.get(this.agentPage);
         const id = operated && !operated.isClosed() ? this.agentPage : this.activePage;
         const page = this.pages.get(id);
         return page ? { id, page } : undefined;
       },
-      pageId => this.busyPages.has(pageId),
-      pageId => this.assertAllowed(pageId),
-      () => this.actor,
-      audit
-    );
+      busy: pageId => this.busyPages.has(pageId),
+      guard: pageId => this.assertAllowed(pageId),
+      actor: () => this.actor,
+      planner: () => this.idle,
+      sinceAgentMs: pageId => Date.now() - (this.observedAt.get(pageId) ?? 0),
+      fresh: pageId => this.fresh.get(pageId) ?? [],
+      pinned: pageId => {
+        if (this.waiting.has(pageId)) return 'the agent is waiting on this page';
+        const page = this.pages.get(pageId);
+        let origin = '';
+        try { origin = page ? new URL(page.url()).origin : ''; } catch { /* not a URL */ }
+        return this.pinnedPages.get(pageId) ?? this.unrestorable.get(origin) ?? (origin === `http://${config.server.host}:${config.server.port}` ? 'Waymark page' : undefined);
+      },
+      unrestorable: (_pageId, origin, reason) => { this.unrestorable.set(origin, reason); },
+      refs: pageId => [...this.refs.get(pageId)?.keys() ?? []]
+    }, audit);
+  }
+
+  /** Start of every agent call on a page: idle behaviour stops and undoes itself before the agent touches anything. */
+  private async claim(pageId: number): Promise<void> {
+    await this.ambient.yield();
+    this.busyPages.add(pageId);
+  }
+
+  /** End of an agent call: the agent now holds this page's state, and thinks from here. */
+  private release(pageId: number, shownLines?: number): void {
+    this.busyPages.delete(pageId);
+    this.observedAt.set(pageId, Date.now());
+    if (shownLines !== undefined) this.shown.set(pageId, shownLines);
+  }
+
+  /** The agent waits on a page (for text, a selector or time): idle behaviour may move the pointer but not leave or click. */
+  async waitOn<T>(pageId: number, work: (page: Page) => Promise<T>): Promise<T> {
+    await this.launch();
+    this.assertAllowed(pageId);
+    await this.ambient.yield();
+    this.waiting.add(pageId);
+    try { return await work(this.page(pageId)); }
+    finally { this.waiting.delete(pageId); this.observedAt.set(pageId, Date.now()); }
+  }
+
+  /** Wait out the pacing model's reaction time; returns the ms waited. */
+  private async pace(context: Omit<PacingContext, 'sinceObservedMs' | 'shownLines'> & { pageId: number }): Promise<number> {
+    const { pageId, ...rest } = context;
+    const observed = this.observedAt.get(pageId);
+    const full: PacingContext = { ...rest, sinceObservedMs: observed === undefined ? 60000 : Date.now() - observed, shownLines: this.shown.get(pageId) ?? 0 };
+    let ms = 0;
+    try { ms = clampDelay(await this.pacing.delay(full)); } catch { ms = 0; }
+    if (ms > 0) await new Promise(resolve => setTimeout(resolve, Math.round(ms)));
+    return Math.round(ms);
   }
 
   setPageHooks(hooks: { factory?: (url: string) => Promise<Page>; activate?: (page: Page) => Promise<void>; close?: (page: Page) => Promise<void>; filter?: (page: Page) => boolean }): void {
@@ -113,6 +175,7 @@ export class BrowserRuntime {
   async tabs(action: 'list' | 'new' | 'close' | 'active', pageId?: number, url?: string): Promise<unknown> {
     await this.launch();
     if (action !== 'list' && this.paused) throw new Error('The user has paused automation in Waymark; wait for the user to resume before retrying.');
+    if (action !== 'list') await this.ambient.yield();
     if (action === 'new') {
       const created = await this.newPage(url ?? 'about:blank');
       this.audit.record({ pageId: created.id, action: 'tabs.new', target: { url }, after: { url: created.url, title: created.title }, status: 'success' });
@@ -148,9 +211,10 @@ export class BrowserRuntime {
     this.agentPage = pageId;
     const page = this.page(pageId);
     const before = await this.pageState(page);
+    await this.claim(pageId);
     const started = this.audit.record({ pageId, action: 'navigate', target: { action, url }, before, status: 'started' });
     const start = Date.now();
-    this.busyPages.add(pageId);
+    let shownLines: number | undefined;
     try {
       if (action === 'url') { if (!url) throw new Error('url is required'); await page.goto(url, { waitUntil: 'domcontentloaded' }); }
       else if (action === 'back') await page.goBack({ waitUntil: 'domcontentloaded' });
@@ -158,13 +222,16 @@ export class BrowserRuntime {
       else await page.reload({ waitUntil: 'domcontentloaded' });
       await page.waitForTimeout(this.config.browser.settleMs);
       this.refs.delete(pageId);
+      this.fresh.delete(pageId);
+      this.pinnedPages.delete(pageId);
+      shownLines = 2;
       const after = await this.pageState(page);
       const event = this.audit.record({ pageId, action: 'navigate', target: { action, url }, before, after, durationMs: Date.now() - start, status: 'success' });
       return { pageId, ...after, traceId: event.id, challenge: await this.settledHook(pageId) };
     } catch (error) {
       this.audit.record({ pageId, action: 'navigate', target: { action, url }, before, durationMs: Date.now() - start, status: 'failure', error: message(error) });
       throw error;
-    } finally { this.busyPages.delete(pageId); }
+    } finally { this.release(pageId, shownLines); }
   }
 
   async snapshot(pageId: number): Promise<SnapshotResult> {
@@ -172,9 +239,15 @@ export class BrowserRuntime {
     this.assertAllowed(pageId);
     this.agentPage = pageId;
     const page = this.page(pageId);
-    const { saved, refs } = await this.capture(pageId, page);
-    this.audit.record({ pageId, action: 'snapshot', target: { snapshotId: saved.id, refCount: refs.size }, basisSnapshotId: saved.id, basisSnapshotHash: saved.hash, before: { url: saved.url, title: saved.title }, after: { url: saved.url, title: saved.title }, status: 'success' });
-    return saved;
+    await this.claim(pageId);
+    let shownLines: number | undefined;
+    try {
+      const { saved, refs } = await this.capture(pageId, page);
+      shownLines = saved.text.split('\n').length;
+      this.fresh.delete(pageId);
+      this.audit.record({ pageId, action: 'snapshot', target: { snapshotId: saved.id, refCount: refs.size }, basisSnapshotId: saved.id, basisSnapshotHash: saved.hash, before: { url: saved.url, title: saved.title }, after: { url: saved.url, title: saved.title }, status: 'success' });
+      return saved;
+    } finally { this.release(pageId, shownLines); }
   }
 
   /**
@@ -275,8 +348,10 @@ export class BrowserRuntime {
     const navigated = page.url() !== beforeUrl;
     const { saved, refs } = await this.capture(pageId, page, navigated ? undefined : previous);
     const full = () => { for (const info of refs.values()) info.snapshotId = saved.id; return saved.text; };
-    if (!previous || navigated) return { navigated, snapshot: full() };
-    const added = [...refs.values()].filter(r => !previous.has(r.ref)).map(r => r.line);
+    if (!previous || navigated) { this.fresh.delete(pageId); return { navigated, snapshot: full() }; }
+    const appeared = [...refs.values()].filter(r => !previous.has(r.ref));
+    this.fresh.set(pageId, appeared.slice(0, 20).map(r => r.ref));
+    const added = appeared.map(r => r.line);
     const removed = [...previous.keys()].filter(ref => !refs.has(ref));
     const changed = [...refs.values()].filter(r => previous.has(r.ref) && previous.get(r.ref)!.line !== r.line).map(r => r.line);
     if (added.length > 80) return { snapshotId: saved.id, note: `${added.length} elements appeared; full snapshot follows`, snapshot: full() };
@@ -287,12 +362,17 @@ export class BrowserRuntime {
     await this.launch();
     this.assertAllowed(pageId);
     const page = this.page(pageId);
-    const expression = format === 'html' ? 'document.documentElement?.outerHTML ?? ""' : 'document.body?.innerText ?? ""';
-    const text = await page.evaluate(expression) as string;
-    const title = await page.title();
-    const clipped = text.slice(0, limit ?? this.config.browser.readLimit);
-    this.audit.record({ pageId, action: 'read', before: { url: page.url(), title }, after: { url: page.url(), title }, status: 'success', detail: { format, textLength: clipped.length, sourceLength: text.length, truncated: clipped.length < text.length } });
-    return { pageId, url: page.url(), title, text: clipped, sourceLength: text.length, truncated: clipped.length < text.length };
+    await this.claim(pageId);
+    let shownLines: number | undefined;
+    try {
+      const expression = format === 'html' ? 'document.documentElement?.outerHTML ?? ""' : 'document.body?.innerText ?? ""';
+      const text = await page.evaluate(expression) as string;
+      const title = await page.title();
+      const clipped = text.slice(0, limit ?? this.config.browser.readLimit);
+      this.audit.record({ pageId, action: 'read', before: { url: page.url(), title }, after: { url: page.url(), title }, status: 'success', detail: { format, textLength: clipped.length, sourceLength: text.length, truncated: clipped.length < text.length } });
+      shownLines = Math.ceil(clipped.length / 120);
+      return { pageId, url: page.url(), title, text: clipped, sourceLength: text.length, truncated: clipped.length < text.length };
+    } finally { this.release(pageId, shownLines); }
   }
 
   async act(input: ActInput): Promise<unknown> {
@@ -300,61 +380,76 @@ export class BrowserRuntime {
     this.assertAllowed(input.page);
     this.agentPage = input.page;
     const page = this.page(input.page);
-    const before = await this.pageState(page);
-    const previous = this.refs.get(input.page);
-    const basis = this.basisFor(input);
-    const target = this.safeTarget(input);
-    const capabilities = this.actionCapabilities(input);
-    const started = this.audit.record({ pageId: input.page, action: input.kind, target, basisSnapshotId: basis?.snapshotId, basisSnapshotHash: basis?.hash, capabilities, before, status: 'started' });
-    const start = Date.now();
-    this.busyPages.add(input.page);
+    await this.claim(input.page);
+    let shownLines: number | undefined;
     try {
-      if (input.kind === 'click' || input.kind === 'hover') {
-        const point = await this.pointOf(input.page, required(input.ref, 'ref'));
-        if (input.kind === 'click') await this.actor.invoke({ page, x: point.x, y: point.y });
-        else await this.actor.move({ page, x: point.x, y: point.y }, 'hover');
-      } else if (input.kind === 'fill') {
-        if (!input.fields?.length) throw new Error('fields is required for fill: [{ ref, value }]');
-        for (const field of input.fields) await this.fillField(input.page, page, field.ref, field.value);
-      } else if (input.kind === 'select') {
-        await this.choose(input.page, page, required(input.ref, 'ref'), required(input.value, 'value'));
-      } else if (input.kind === 'type') {
-        const value = required(input.value, 'value');
-        const kind = input.ref ? await this.kindOf(input.page, input.ref) : undefined;
-        // Selects, toggles and date-like inputs cannot take keystrokes meaningfully: route them through fill's dispatch.
-        if (input.ref && kind && (kind.tag === 'SELECT' || ['checkbox', 'radio', 'date', 'time', 'datetime-local', 'month', 'week', 'color', 'range'].includes(kind.type))) await this.fillField(input.page, page, input.ref, value);
-        else {
-          if (input.ref) await this.focusText(input.page, page, input.ref, false);
-          await this.keyboard.type(page, value);
+      const before = await this.pageState(page);
+      const previous = this.refs.get(input.page);
+      const basis = this.basisFor(input);
+      const target = this.safeTarget(input);
+      const capabilities = this.actionCapabilities(input);
+      const info = input.ref ? previous?.get(input.ref) : undefined;
+      const commit = looksLikeCommit(info?.role, info?.name);
+      const pacedMs = input.kind === 'copy' ? 0 : await this.pace({ pageId: input.page, kind: input.kind, commit });
+      const started = this.audit.record({ pageId: input.page, action: input.kind, target, basisSnapshotId: basis?.snapshotId, basisSnapshotHash: basis?.hash, capabilities: [...capabilities, this.pacing.manifest], before, status: 'started', detail: { pacedMs } });
+      const start = Date.now();
+      try {
+        if (input.kind === 'click' || input.kind === 'hover') {
+          const point = await this.pointOf(input.page, required(input.ref, 'ref'));
+          if (input.kind === 'click') await this.actor.invoke({ page, x: point.x, y: point.y });
+          else await this.actor.move({ page, x: point.x, y: point.y }, 'hover');
+        } else if (input.kind === 'fill') {
+          if (!input.fields?.length) throw new Error('fields is required for fill: [{ ref, value }]');
+          for (const [index, field] of input.fields.entries()) {
+            if (index > 0) await this.pace({ pageId: input.page, kind: 'field', commit: false, index });
+            await this.fillField(input.page, page, field.ref, field.value);
+          }
+        } else if (input.kind === 'select') {
+          await this.choose(input.page, page, required(input.ref, 'ref'), required(input.value, 'value'));
+        } else if (input.kind === 'type') {
+          const value = required(input.value, 'value');
+          const kind = input.ref ? await this.kindOf(input.page, input.ref) : undefined;
+          // Selects, toggles and date-like inputs cannot take keystrokes meaningfully: route them through fill's dispatch.
+          if (input.ref && kind && (kind.tag === 'SELECT' || ['checkbox', 'radio', 'date', 'time', 'datetime-local', 'month', 'week', 'color', 'range'].includes(kind.type))) await this.fillField(input.page, page, input.ref, value);
+          else {
+            if (input.ref) await this.focusText(input.page, page, input.ref, false);
+            await this.keyboard.type(page, value);
+          }
+        } else if (input.kind === 'paste') {
+          await this.focusText(input.page, page, required(input.ref, 'ref'), false);
+          await this.clipboard.invoke({ page, text: input.value ?? await this.clipboard.read() });
+        } else if (input.kind === 'copy') {
+          const locator = this.locator(input.page, required(input.ref, 'ref'));
+          const text = await locator.inputValue().catch(async () => await locator.textContent() ?? '');
+          await this.clipboard.write(text);
+        } else if (input.kind === 'press') {
+          const key = required(input.key, 'key');
+          if (key.length > 1 && !/^([A-Z][A-Za-z0-9]*|F\d+)(\+([A-Z][A-Za-z0-9]*|.))*$/.test(key)) throw new Error(`press takes a key name such as Enter, Tab, ArrowDown or Control+A; to enter text use kind "type" or "fill"`);
+          await page.keyboard.press(key);
+        } else if (input.kind === 'scroll') {
+          const amount = (input.amount ?? 3) * 160;
+          const delta = input.direction === 'up' || input.direction === 'left' ? -amount : amount;
+          await page.mouse.wheel(input.direction === 'left' || input.direction === 'right' ? delta : 0, input.direction === 'left' || input.direction === 'right' ? 0 : delta);
         }
-      } else if (input.kind === 'paste') {
-        await this.focusText(input.page, page, required(input.ref, 'ref'), false);
-        await this.clipboard.invoke({ page, text: input.value ?? await this.clipboard.read() });
-      } else if (input.kind === 'copy') {
-        const locator = this.locator(input.page, required(input.ref, 'ref'));
-        const text = await locator.inputValue().catch(async () => await locator.textContent() ?? '');
-        await this.clipboard.write(text);
-      } else if (input.kind === 'press') {
-        const key = required(input.key, 'key');
-        if (key.length > 1 && !/^([A-Z][A-Za-z0-9]*|F\d+)(\+([A-Z][A-Za-z0-9]*|.))*$/.test(key)) throw new Error(`press takes a key name such as Enter, Tab, ArrowDown or Control+A; to enter text use kind "type" or "fill"`);
-        await page.keyboard.press(key);
-      } else if (input.kind === 'scroll') {
-        const amount = (input.amount ?? 3) * 160;
-        const delta = input.direction === 'up' || input.direction === 'left' ? -amount : amount;
-        await page.mouse.wheel(input.direction === 'left' || input.direction === 'right' ? delta : 0, input.direction === 'left' || input.direction === 'right' ? 0 : delta);
+        await page.waitForTimeout(this.config.browser.settleMs);
+        const readyState = await page.evaluate('document.readyState').catch(() => null);
+        if (readyState === 'loading') await page.waitForLoadState('domcontentloaded', { timeout: 5000 }).catch(() => undefined);
+        await this.settle(page);
+        const after = await this.pageState(page);
+        const event = this.audit.record({ pageId: input.page, action: input.kind, target, basisSnapshotId: basis?.snapshotId, basisSnapshotHash: basis?.hash, capabilities: [...capabilities, this.pacing.manifest], before, after, durationMs: Date.now() - start, status: 'success', detail: { pacedMs } });
+        const changes = input.kind === 'copy' ? undefined : await this.changes(input.page, page, previous, before.url).catch(() => undefined) as { added?: string[]; changed?: string[]; snapshot?: string } | undefined;
+        shownLines = changes ? changes.snapshot ? changes.snapshot.split('\n').length : (changes.added?.length ?? 0) + (changes.changed?.length ?? 0) : 0;
+        // A page reached by submitting something cannot always be returned to; idle behaviour stays on it.
+        if (after.url !== before.url) {
+          if (commit || input.kind === 'press' || info?.role === 'submit') this.pinnedPages.set(input.page, 'shows the result of a submission');
+          else this.pinnedPages.delete(input.page);
+        }
+        return { ok: true, traceId: event.id, before, after, changes, challenge: await this.settledHook(input.page) };
+      } catch (error) {
+        this.audit.record({ pageId: input.page, action: input.kind, target, basisSnapshotId: basis?.snapshotId, basisSnapshotHash: basis?.hash, capabilities: [...capabilities, this.pacing.manifest], before, durationMs: Date.now() - start, status: 'failure', error: message(error), detail: { pacedMs } });
+        throw error;
       }
-      await page.waitForTimeout(this.config.browser.settleMs);
-      const readyState = await page.evaluate('document.readyState').catch(() => null);
-      if (readyState === 'loading') await page.waitForLoadState('domcontentloaded', { timeout: 5000 }).catch(() => undefined);
-      await this.settle(page);
-      const after = await this.pageState(page);
-      const event = this.audit.record({ pageId: input.page, action: input.kind, target, basisSnapshotId: basis?.snapshotId, basisSnapshotHash: basis?.hash, capabilities, before, after, durationMs: Date.now() - start, status: 'success' });
-      const changes = input.kind === 'copy' ? undefined : await this.changes(input.page, page, previous, before.url).catch(() => undefined);
-      return { ok: true, traceId: event.id, before, after, changes, challenge: await this.settledHook(input.page) };
-    } catch (error) {
-      this.audit.record({ pageId: input.page, action: input.kind, target, basisSnapshotId: basis?.snapshotId, basisSnapshotHash: basis?.hash, capabilities, before, durationMs: Date.now() - start, status: 'failure', error: message(error) });
-      throw error;
-    } finally { this.busyPages.delete(input.page); }
+    } finally { this.release(input.page, shownLines); }
   }
 
   private timeout(): number { return this.config.browser.actionTimeoutMs ?? 5000; }
@@ -464,12 +559,16 @@ export class BrowserRuntime {
     if (!fitsSlot(slot, provider)) throw new Error(`${id} cannot fill the ${slot} slot`);
     if (slot === 'pointer') { this.actor = provider as unknown as PointerActor; this.config.capabilities.pointer = id; }
     else if (slot === 'keyboard') { this.keyboard = provider as unknown as KeyboardActor; this.config.capabilities.keyboard = id; }
+    else if (slot === 'pacing') { this.pacing = provider as unknown as PacingModel; this.config.capabilities.pacing = id; }
+    else if (slot === 'idle') { this.idle = provider as unknown as IdlePlanner; this.config.capabilities.idle = id; }
     else if (slot === 'clipboard') { this.clipboard = provider as unknown as ClipboardCapability; this.config.capabilities.clipboard = id; }
     else this.config.capabilities.challengeOcr = id;
     this.audit.record({ action: `settings.${slot}`, status: 'info', detail: { provider: id } });
   }
 
   private activeId(slot: CapabilitySlot): string {
+    if (slot === 'pacing') return this.config.capabilities.pacing ?? 'action.pacing.human';
+    if (slot === 'idle') return this.config.capabilities.idle ?? 'idle.adaptive';
     return slot === 'pointer' ? this.config.capabilities.pointer : slot === 'keyboard' ? this.config.capabilities.keyboard ?? 'action.keyboard.human' : slot === 'clipboard' ? this.config.capabilities.clipboard : this.config.capabilities.challengeOcr;
   }
 
@@ -511,6 +610,8 @@ export class BrowserRuntime {
     this.pages.set(id, page);
     if (!this.activePage) this.activePage = id;
     page.on('close', () => this.unregister(id));
+    // A window registered before its first load (blank URL) is checked again once it has one.
+    if (!page.url() || page.url() === 'about:blank') page.once('framenavigated', () => { if (!this.pageFilter(page)) this.unregister(id); });
     return id;
   }
 
@@ -520,6 +621,10 @@ export class BrowserRuntime {
     this.pages.delete(id);
     this.refs.delete(id);
     this.busyPages.delete(id);
+    this.observedAt.delete(id);
+    this.shown.delete(id);
+    this.fresh.delete(id);
+    this.pinnedPages.delete(id);
     if (this.activePage === id) this.activePage = order[index + 1] ?? order[index - 1] ?? 0;
   }
 

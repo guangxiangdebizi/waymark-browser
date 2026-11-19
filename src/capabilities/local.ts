@@ -2,6 +2,8 @@ import type { AppConfig } from '../types.js';
 import { CapabilityRegistry } from './CapabilityRegistry.js';
 import { InputActor } from '../browser/InputActor.js';
 import { FastKeyboard, HumanKeyboard } from '../browser/HumanKeyboard.js';
+import { HumanPacing, NoPacing } from '../browser/Pacing.js';
+import { AdaptivePlanner, DriftPlanner } from '../browser/IdlePlanners.js';
 import { DdddOcrWorker } from '../challenge/DdddOcrWorker.js';
 import { ClipboardProvider } from './ClipboardProvider.js';
 import { SystemClipboardProvider } from './SystemClipboardProvider.js';
@@ -12,6 +14,10 @@ export function createLocalCapabilities(config: AppConfig): CapabilityRegistry {
   registry.register(new InputActor(config.browser.mouse));
   registry.register(new HumanKeyboard(config.browser.typing));
   registry.register(new FastKeyboard());
+  registry.register(new HumanPacing(config.browser.pacing));
+  registry.register(new NoPacing());
+  registry.register(new AdaptivePlanner());
+  registry.register(new DriftPlanner());
   registry.register(new DdddOcrWorker(config.challenge));
   registry.register(new ClipboardProvider());
   registry.register(new SystemClipboardProvider(config.browser.systemPasteSettleMs));
@@ -23,7 +29,7 @@ export async function createCapabilities(config: AppConfig): Promise<CapabilityR
   const registry = createLocalCapabilities(config);
   const builtin = registry.get('action.pointer.bezier') as unknown as InputActor;
   await loadPlugins(config, registry, builtin);
-  const defaults = { pointer: 'action.pointer.bezier', keyboard: 'action.keyboard.human', challengeOcr: 'challenge.ocr.ddddocr', clipboard: 'action.clipboard.virtual' } as const;
+  const defaults = { pointer: 'action.pointer.bezier', keyboard: 'action.keyboard.human', pacing: 'action.pacing.human', idle: 'idle.adaptive', challengeOcr: 'challenge.ocr.ddddocr', clipboard: 'action.clipboard.virtual' } as const;
   for (const key of Object.keys(defaults) as Array<keyof typeof defaults>) {
     if (config.capabilities[key] === undefined) { config.capabilities[key] = defaults[key]; continue; }
     if (!registry.list().some(item => item.id === config.capabilities[key])) {

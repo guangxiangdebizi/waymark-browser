@@ -12,7 +12,7 @@ export function loadConfig(): AppConfig {
   const path = env('CONFIG') ?? './config/development.json';
   const config = JSON.parse(readFileSync(resolve(path), 'utf8').replace(/^\uFEFF/, '')) as AppConfig;
   if (existsSync(resolve(config.settingsFile))) {
-    const local = JSON.parse(readFileSync(resolve(config.settingsFile), 'utf8').replace(/^\uFEFF/, '')) as { uiLanguage?: string; capabilities?: { clipboard?: string; pointer?: string; keyboard?: string; challengeOcr?: string; plugins?: AppConfig['capabilities']['plugins'] }; browser?: { ambientMouse?: { enabled?: boolean } }; home?: AppConfig['home'] };
+    const local = JSON.parse(readFileSync(resolve(config.settingsFile), 'utf8').replace(/^\uFEFF/, '')) as { uiLanguage?: string; capabilities?: { clipboard?: string; pointer?: string; keyboard?: string; pacing?: string; idle?: string; challengeOcr?: string; plugins?: AppConfig['capabilities']['plugins'] }; browser?: { ambientMouse?: { enabled?: boolean; protectedSites?: string[] } }; home?: AppConfig['home'] };
     if (typeof local.uiLanguage === 'string') config.uiLanguage = local.uiLanguage;
     const selected = local.capabilities?.clipboard;
     // Provider ids are validated once plugins are loaded (createCapabilities); unknown ids fall back to the defaults.
@@ -20,8 +20,11 @@ export function loadConfig(): AppConfig {
     if (typeof local.capabilities?.challengeOcr === 'string') config.capabilities.challengeOcr = local.capabilities.challengeOcr;
     if (typeof local.capabilities?.pointer === 'string') config.capabilities.pointer = local.capabilities.pointer;
     if (typeof local.capabilities?.keyboard === 'string') config.capabilities.keyboard = local.capabilities.keyboard;
+    if (typeof local.capabilities?.pacing === 'string') config.capabilities.pacing = local.capabilities.pacing;
+    if (typeof local.capabilities?.idle === 'string') config.capabilities.idle = local.capabilities.idle;
     if (Array.isArray(local.capabilities?.plugins)) config.capabilities.plugins = [...(config.capabilities.plugins ?? []), ...local.capabilities.plugins];
     if (typeof local.browser?.ambientMouse?.enabled === 'boolean') config.browser.ambientMouse.enabled = local.browser.ambientMouse.enabled;
+    if (Array.isArray(local.browser?.ambientMouse?.protectedSites)) config.browser.ambientMouse.protectedSites = [...(config.browser.ambientMouse.protectedSites ?? []), ...local.browser.ambientMouse.protectedSites];
     if (Array.isArray(local.home?.quickLinks)) config.home = { ...config.home, quickLinks: local.home.quickLinks };
   }
   if (env('PORT')) config.server.port = Number(env('PORT'));
@@ -31,6 +34,8 @@ export function loadConfig(): AppConfig {
   else if (!existsSync(resolve(config.challenge.pythonCommand)) && existsSync(resolve('.venv/bin/python'))) config.challenge.pythonCommand = './.venv/bin/python';
   if (config.challenge.pythonFallback === 'python' && process.platform !== 'win32') config.challenge.pythonFallback = 'python3';
   config.capabilities.keyboard ??= 'action.keyboard.human';
+  config.capabilities.pacing ??= 'action.pacing.human';
+  config.capabilities.idle ??= 'idle.adaptive';
   config.uiLanguage = normalizeLanguage(config.uiLanguage);
   return config;
 }

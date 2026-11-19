@@ -9,6 +9,7 @@ npm ci
 npm run build && npm test        # TypeScript build + unit tests
 npm run app                      # launch the desktop app (MCP on 127.0.0.1:9510)
 npm run test:electron            # end-to-end, with the app running
+npm run test:idle                # idle behaviour and restore, headless Chrome
 cd cli && python -m unittest discover -s tests
 ```
 

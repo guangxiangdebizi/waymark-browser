@@ -1,6 +1,6 @@
 {
   "name": "waymark-browser",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "private": true,
   "description": "Waymark: an open-source desktop browser for AI agents and humans to share - MCP control, isolated input, local CAPTCHA triage and a traceable action ledger.",
   "license": "MIT",
@@ -31,6 +31,7 @@
     "start": "node dist/index.js",
     "test": "tsx --test tests/*.test.ts",
     "test:e2e": "tsx tests/e2e.ts",
+    "test:idle": "tsx tests/idle_e2e.ts",
     "test:ocr": "node scripts/run-ocr-tests.mjs",
     "app": "npm run build && node dist/app/launcher.js",
     "test:electron": "tsx tests/electron_mcp_e2e.ts",

@@ -34,6 +34,8 @@ The automation layer is a set of **capability slots**. Each slot has a built-in 
 |---|---|---|
 | **Pointer movement**: every agent click, hover and idle movement | Curved Bézier path | [Minimum-jerk reach with Fitts-law timing](examples/plugins/pointer-minimum-jerk.mjs), [WindMouse in Python](examples/plugins/pointer_model.py), or your own model trained on recorded mouse traces |
 | **Keyboard**: every character the agent types | Human-paced typing: key hold time, uneven gaps, word pauses, corrected typos | Your own typing-cadence model, or `action.keyboard.fast` when speed matters more |
+| **Pacing**: when each agent step starts | Human reaction and reading time, added only when the agent answered faster than a person could | [A fixed think time](examples/plugins/pacing-fixed.mjs), or your own reaction model |
+| **Idle behaviour**: what the pointer does while the agent thinks | Looks at new content, reads, rests, clicks empty page, scrolls and briefly visits links, all undone before the agent's next step | [A line-by-line reader](examples/plugins/idle-reader.mjs), or `idle.drift` to hover only |
 | **CAPTCHA solving**: the first step in the challenge chain | Local `ddddocr` worker | [Any OCR engine or fine-tuned model in a separate process](examples/plugins/ocr_solver.py) |
 | **Clipboard**: where agent copy and paste go | Isolated per-session clipboard; system clipboard on request | Any provider with `read` / `write` / paste |
 
@@ -47,13 +49,16 @@ Many sites look at *how* input arrives: pointer paths, speed profiles, hover and
 same model (DeepSeek V4.1 Flash) the paper's task through browser-use and through Waymark, 10 sessions per form, and scored
 them with the paper's own detector (0 = human, 1 = automated):
 
-| Form | Humans (paper) | browser-use | Waymark 0.4.0 |
-|---|---|---|---|
-| Simple form | 0.03 | 1.00 | **0.00** |
-| Dynamic form, 22 fields revealed one by one | 0.04 | 0.96 | **0.05** |
-| Key hold / pointer moves per session (dynamic) | 108 ms / 175 | 11 ms / 0 | 121 ms / 172 |
+| Form | Humans (paper) | browser-use | Waymark 0.4.0 | Waymark 0.5.0 |
+|---|---|---|---|---|
+| Simple form | 0.03 | 1.00 | **0.00** | **0.00** |
+| Dynamic form, 22 fields revealed one by one | 0.04 | 0.96 | **0.05** | **0.13** |
+| Key hold / pointer moves per session (dynamic) | 108 ms / 175 | 11 ms / 0 | 121 ms / 172 | 115 ms / 151 |
+| Median reaction (dynamic) | 3.3 s | 4.8 s | 8.1 s | 6.6 s |
 
-All Waymark sessions submitted the form. The remaining tell is speed: Waymark's median reaction is slower than a person's.
+All Waymark sessions submitted the form. In 0.5.0 no session falls outside the human range on key timing, pointer
+movement or reaction time, and reaction is closer to a person's. It is still slower than a person: the gap left is the
+LLM round trip.
 Method, caveats and raw data: [docs/benchmark-agentshield.md](docs/benchmark-agentshield.md).
 
 ## What else you get
@@ -63,7 +68,7 @@ Method, caveats and raw data: [docs/benchmark-agentshield.md](docs/benchmark-age
 - **MCP endpoint for any agent.** `tabs`, `navigate`, `snapshot`, `read`, `act`, `wait`, `challenge`, `audit`, `capabilities`. Works with Claude Code, Codex, Cursor and anything that speaks MCP over HTTP or stdio.
 - **Traceable actions.** Every navigation, click, fill and read is written to a local ledger. Each entry records the session, before and after URLs, duration, the provider that ran it, and the SHA-256 of the snapshot it was based on. Click any step in the side panel or on `/audit` to see the element the agent targeted.
 - **Isolated input by default.** Agent mouse and keyboard events go only to the target tab. Clipboard operations go to a per-session virtual clipboard, so your system clipboard and cursor stay yours. A global clipboard mode is one switch away.
-- **Ambient pointer.** On idle pages the pointer can wander over non-interactive areas. It only hovers and never clicks. Clicks happen only when the agent asks for them.
+- **Idle behaviour you can trust.** While the agent thinks, the pointer behaves like a person deciding: it reads, rests, scrolls and now and then glances at another page. Before the agent's next step everything is undone and the agent finds the page exactly as it left it. Checkout, sign-in, payment and application pages, unsaved forms and your own protected sites are never left.
 - **You hold the lease.** Press *Pause AI* and every agent read and write is refused until you resume.
 - **Untrusted content stays data.** Page-derived tool output is wrapped in nonce-tagged `UNTRUSTED_PAGE_CONTENT` markers. Password values never enter snapshots, and fill values and OCR answers never reach the ledger.
 
@@ -179,7 +184,7 @@ The control API listens on `127.0.0.1` only. It refuses cross-origin and non-JSO
 
 ## Status
 
-Early but used daily. Implemented: the desktop shell, the MCP tools above, pluggable pointer and keyboard models, the isolated clipboard, the ambient pointer, the challenge pipeline, the ledger, the CLI and an eight-language UI. Next slots: action pacing, scrolling, and slider or click-order challenge solvers. Planned: installers and auto-update, a full accessibility tree and iframe refs, file upload and download, screenshots, a password vault and profile import, and a tamper-evident ledger.
+Early but used daily. Implemented: the desktop shell, the MCP tools above, pluggable pointer, keyboard, pacing and idle models, the isolated clipboard, the challenge pipeline, the ledger, the CLI and an eight-language UI. Next slots: scrolling, and slider or click-order challenge solvers. Planned: installers and auto-update, a full accessibility tree and iframe refs, file upload and download, screenshots, a password vault and profile import, and a tamper-evident ledger.
 
 ## Development
 
@@ -188,6 +193,7 @@ npm ci
 npm run build && npm test          # unit tests
 npm run app                        # launch the desktop app
 npm run test:electron              # end-to-end against the running app
+npm run test:idle                  # idle behaviour and restore against headless Chrome
 cd cli && python -m unittest discover -s tests
 ```
 

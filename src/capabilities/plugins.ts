@@ -6,6 +6,8 @@ import type { AppConfig } from '../types.js';
 import { fromRoot } from '../config.js';
 import type { CapabilityManifest, CapabilityProvider, CapabilityRegistry } from './CapabilityRegistry.js';
 import type { PointerActor, PointerInput } from '../browser/InputActor.js';
+import { clampDelay, type PacingContext, type PacingModel } from '../browser/Pacing.js';
+import type { IdlePlanner, IdleScene, IdleStep } from '../browser/IdleController.js';
 
 /** One sample of a pointer path. `dt` is the pause in ms before moving to the next sample. */
 export interface TrajectoryPoint { x: number; y: number; dt?: number }
@@ -30,7 +32,40 @@ export interface TrajectoryModel {
 }
 
 /** Which slot an external-process plugin fills. Module plugins declare themselves by shape. */
-export type PluginSlot = 'pointer' | 'ocr';
+export type PluginSlot = 'pointer' | 'ocr' | 'pacing' | 'idle';
+
+type ModelManifest = { id: string; version?: string; description?: string; runtime?: CapabilityManifest['runtime'] };
+function manifestOf(model: ModelManifest, fallback: string): CapabilityManifest {
+  return { id: model.id, version: model.version ?? '0.0.0', kind: 'action', runtime: model.runtime ?? 'node', dataEgress: 'local-only', description: model.description ?? fallback };
+}
+
+/** A pacing model from a module: `{ manifest, delay(context) => ms }`. A broken model never blocks the agent: it waits 0 ms. */
+export class PluginPacing implements PacingModel {
+  readonly manifest: CapabilityManifest;
+  constructor(private model: { manifest: ModelManifest; delay(context: PacingContext): number | Promise<number>; close?(): Promise<void> }) {
+    this.manifest = manifestOf(model.manifest, 'Custom pacing model');
+  }
+  async delay(context: PacingContext): Promise<number> {
+    try { return clampDelay(await this.model.delay(context)); }
+    catch (error) { console.warn(`[waymark] pacing model ${this.manifest.id} failed: ${error instanceof Error ? error.message : error}`); return 0; }
+  }
+  async invoke(context: PacingContext): Promise<number> { return this.delay(context); }
+  async close(): Promise<void> { await this.model.close?.(); }
+}
+
+/** An idle planner from a module: `{ manifest, plan(scene) => steps }`. A broken planner does nothing that tick. */
+export class PluginIdle implements IdlePlanner {
+  readonly manifest: CapabilityManifest;
+  constructor(private model: { manifest: ModelManifest; plan(scene: IdleScene): IdleStep[] | Promise<IdleStep[]>; close?(): Promise<void> }) {
+    this.manifest = manifestOf(model.manifest, 'Custom idle planner');
+  }
+  async plan(scene: IdleScene): Promise<IdleStep[]> {
+    try { return await this.model.plan(scene); }
+    catch (error) { console.warn(`[waymark] idle planner ${this.manifest.id} failed: ${error instanceof Error ? error.message : error}`); return []; }
+  }
+  async invoke(scene: IdleScene): Promise<IdleStep[]> { return this.plan(scene); }
+  async close(): Promise<void> { await this.model.close?.(); }
+}
 
 export type PluginEntry =
   | { module: string }
@@ -51,8 +86,11 @@ export class TrajectoryPointer implements PointerActor {
     };
   }
 
+  position(page: Page): { x: number; y: number } | undefined { return this.positions.get(page); }
+
   async invoke(input: PointerInput): Promise<void> {
     await this.move(input, 'click');
+    if (input.signal?.aborted) return;
     const hold = Math.max(0, Math.min(400, Number(this.model.pressMs?.() ?? 45)));
     await input.page.mouse.click(input.x, input.y, { delay: Number.isFinite(hold) ? hold : 45 });
   }
@@ -71,6 +109,7 @@ export class TrajectoryPointer implements PointerActor {
       return;
     }
     for (const point of points) {
+      if (input.signal?.aborted) { this.positions.set(page, point); return; }
       await page.mouse.move(point.x, point.y);
       if (point.dt) await page.waitForTimeout(point.dt);
     }
@@ -179,8 +218,30 @@ export class ProcessOcrProvider implements CapabilityProvider<Buffer, { text: st
   async close(): Promise<void> { this.process.close(); }
 }
 
+/** Pacing model in another process: `{id, context}` -> `{id, delayMs}`. */
+export function processPacing(entry: ProcessEntry): PluginPacing {
+  const process = new JsonLineProcess(entry, 1000);
+  return new PluginPacing({
+    manifest: { id: entry.id, version: entry.version, description: entry.description ?? `External pacing model: ${entry.command.join(' ')}`, runtime: 'external-process' },
+    delay: async context => (await process.request<{ delayMs?: number }>({ context })).delayMs ?? 0,
+    close: async () => process.close()
+  });
+}
+
+/** Idle planner in another process: `{id, scene}` -> `{id, steps}`. */
+export function processIdle(entry: ProcessEntry): PluginIdle {
+  const process = new JsonLineProcess(entry, 1000);
+  return new PluginIdle({
+    manifest: { id: entry.id, version: entry.version, description: entry.description ?? `External idle planner: ${entry.command.join(' ')}`, runtime: 'external-process' },
+    plan: async scene => (await process.request<{ steps?: IdleStep[] }>({ scene })).steps ?? [],
+    close: async () => process.close()
+  });
+}
+
 function isTrajectoryModel(value: any): value is TrajectoryModel { return value && typeof value.trajectory === 'function' && value.manifest?.id; }
 function isProvider(value: any): value is CapabilityProvider { return value && typeof value.invoke === 'function' && value.manifest?.id; }
+function isPacingModel(value: any): boolean { return value && typeof value.delay === 'function' && value.manifest?.id; }
+function isIdlePlanner(value: any): boolean { return value && typeof value.plan === 'function' && value.manifest?.id; }
 
 /**
  * Loads `capabilities.plugins` from config. A module may export (default or `providers`) a TrajectoryModel,
@@ -191,7 +252,10 @@ export async function loadPlugins(config: AppConfig, registry: CapabilityRegistr
   for (const entry of config.capabilities.plugins ?? []) {
     try {
       if ('command' in entry) {
-        registry.register(entry.kind === 'ocr' ? new ProcessOcrProvider(entry) : new TrajectoryPointer(new ProcessTrajectoryModel(entry), fallbackPointer));
+        registry.register(entry.kind === 'ocr' ? new ProcessOcrProvider(entry)
+          : entry.kind === 'pacing' ? processPacing(entry)
+          : entry.kind === 'idle' ? processIdle(entry)
+          : new TrajectoryPointer(new ProcessTrajectoryModel(entry), fallbackPointer));
         loaded.push(entry.id);
         continue;
       }
@@ -200,8 +264,10 @@ export async function loadPlugins(config: AppConfig, registry: CapabilityRegistr
       if (typeof exported === 'function' && !isTrajectoryModel(exported) && !isProvider(exported)) exported = await exported({ config });
       for (const item of Array.isArray(exported) ? exported : [exported]) {
         if (isTrajectoryModel(item)) registry.register(new TrajectoryPointer(item, fallbackPointer));
+        else if (isPacingModel(item)) registry.register(new PluginPacing(item));
+        else if (isIdlePlanner(item)) registry.register(new PluginIdle(item));
         else if (isProvider(item)) registry.register(item);
-        else throw new Error('export a TrajectoryModel ({ manifest, trajectory }) or a CapabilityProvider ({ manifest, invoke })');
+        else throw new Error('export a TrajectoryModel ({ manifest, trajectory }), a pacing model ({ manifest, delay }), an idle planner ({ manifest, plan }) or a CapabilityProvider ({ manifest, invoke })');
         loaded.push(item.manifest.id);
       }
     } catch (error) {

@@ -11,6 +11,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { fromRoot } from './config.js';
 import { languageCodes, normalizeLanguage } from './i18n.js';
+import { CAPABILITY_SLOTS, type CapabilitySlot } from './capabilities/slots.js';
 
 export async function startServer(config: AppConfig, runtime: BrowserRuntime, challenges: ChallengeBroker) {
   const app = express();
@@ -49,7 +50,7 @@ export async function startServer(config: AppConfig, runtime: BrowserRuntime, ch
     const status = typeof req.query.status === 'string' && req.query.status ? req.query.status : undefined;
     const q = typeof req.query.q === 'string' ? req.query.q.toLowerCase() : '';
     res.json(runtime.audit.list(limit, event =>
-      (includeAmbient || event.action !== 'mouse.ambient') &&
+      (includeAmbient || !isIdle(event.action)) &&
       (!action || event.action === action || event.action.startsWith(action + '.')) &&
       (!status || event.status === status) &&
       (!q || JSON.stringify([event.action, event.session, event.before, event.after, event.error, event.id]).toLowerCase().includes(q))
@@ -57,7 +58,7 @@ export async function startServer(config: AppConfig, runtime: BrowserRuntime, ch
   });
   app.get('/api/status', (_req, res) => {
     const today = new Date().toISOString().slice(0, 10);
-    const latest = runtime.audit.list(1, event => event.action !== 'mouse.ambient' && event.action !== 'tabs.list' && !event.action.startsWith('settings.'))[0];
+    const latest = runtime.audit.list(1, event => !isIdle(event.action) && event.action !== 'tabs.list' && !event.action.startsWith('settings.'))[0];
     res.json({
       session: runtime.audit.getSession(), paused: runtime.isPaused(), busy: runtime.busyCount(), tabs: runtime.pageCount(),
       uiLanguage: config.uiLanguage,
@@ -86,15 +87,15 @@ export async function startServer(config: AppConfig, runtime: BrowserRuntime, ch
       if (typeof req.body?.ambientMouseEnabled === 'boolean') runtime.setAmbientMouseEnabled(req.body.ambientMouseEnabled);
       if (typeof req.body?.pointerProvider === 'string') runtime.setSlot('pointer', req.body.pointerProvider);
       for (const [slot, value] of Object.entries(req.body?.slots ?? {})) {
-        if (!['pointer', 'keyboard', 'ocr', 'clipboard'].includes(slot) || typeof value !== 'string') throw new Error(`Unknown slot ${slot}`);
-        runtime.setSlot(slot as 'pointer' | 'keyboard' | 'ocr' | 'clipboard', value);
+        if (!(CAPABILITY_SLOTS as readonly string[]).includes(slot) || typeof value !== 'string') throw new Error(`Unknown slot ${slot}`);
+        runtime.setSlot(slot as CapabilitySlot, value);
       }
       const path = fromRoot(config.settingsFile);
       mkdirSync(dirname(path), { recursive: true });
       const current = existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : {};
       current.uiLanguage = uiLanguage ?? config.uiLanguage;
       const slots = runtime.slots();
-      current.capabilities = { ...current.capabilities, clipboard: slots.clipboard.active, pointer: slots.pointer.active, keyboard: slots.keyboard.active, challengeOcr: slots.ocr.active };
+      current.capabilities = { ...current.capabilities, clipboard: slots.clipboard.active, pointer: slots.pointer.active, keyboard: slots.keyboard.active, pacing: slots.pacing.active, idle: slots.idle.active, challengeOcr: slots.ocr.active };
       current.browser = { ...current.browser, ambientMouse: { ...current.browser?.ambientMouse, enabled: runtime.getAmbientMouseState().enabled } };
       writeFileSync(path, JSON.stringify(current, null, 2));
       config.uiLanguage = current.uiLanguage;
@@ -117,3 +118,6 @@ export async function startServer(config: AppConfig, runtime: BrowserRuntime, ch
     });
   });
 }
+
+/** Idle behaviour (pointer drift, idle clicks, scrolls and visits) is kept out of the agent's activity counts. */
+function isIdle(action: string): boolean { return action === 'mouse.ambient' || action.startsWith('idle.'); }

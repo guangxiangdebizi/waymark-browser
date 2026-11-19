@@ -104,11 +104,16 @@
       case 'tabs.active': return { icon: 'tab', what: t("切换标签页") };
       case 'tabs.list': return { icon: 'tab', what: t("查看标签页列表 · {0} 个", [detail.count ?? 0]) };
       case 'mouse.ambient': return { icon: 'mouse', what: t("鼠标游走（未点击）") };
+      case 'idle.click': return { icon: 'mouse', what: t("思考间隙点了一下空白处") };
+      case 'idle.scroll': return { icon: 'scroll', what: t("思考间隙滚动页面，已复原") };
+      case 'idle.visit': return { icon: 'nav', what: t("思考间隙打开 {0} 后返回", [host(detail.visited)]) + (detail.restored && detail.restored !== 'intact' ? t("（页面已重新加载）") : '') };
       case 'session.named': return { icon: 'tag', what: t("开始会话 “") + (detail.name || event.session) + '”' };
       case 'settings.clipboard': return { icon: 'gear', what: t("剪贴板切换为") + ({ 'action.clipboard.virtual': t("隔离模式"), 'action.clipboard.system': t("系统全局") }[detail.provider] || ' ' + detail.provider) };
       case 'settings.pointer': return { icon: 'gear', what: t("鼠标轨迹模型切换为 ") + detail.provider };
       case 'settings.keyboard': return { icon: 'gear', what: t("键盘输入切换为 ") + detail.provider };
       case 'settings.ocr': return { icon: 'gear', what: t("验证码识别切换为 ") + detail.provider };
+      case 'settings.pacing': return { icon: 'gear', what: t("操作节奏切换为 ") + detail.provider };
+      case 'settings.idle': return { icon: 'gear', what: t("空闲行为切换为 ") + detail.provider };
       case 'settings.ambientMouse': return { icon: 'gear', what: t("自主鼠标游走") + ' · ' + (detail.enabled ? t("开启") : t("关闭")) };
       case 'settings.control': return { icon: 'gear', what: detail.paused ? t("用户暂停了 AI") : t("用户恢复了 AI") };
       case 'browser.launch': return { icon: 'power', what: t("浏览器启动") };

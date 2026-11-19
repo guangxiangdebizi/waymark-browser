@@ -33,7 +33,8 @@
       var pending = (s.challenges || []).filter(function(j){ return ['human_required','ai_recovery_required','detected'].indexOf(j.status) >= 0; }).length;
       document.getElementById('s-ai').innerHTML = s.paused ? ("<span class=\"dot warn\"></span>" + th("已暂停（由你控制）") + "") : s.busy ? ("<span class=\"dot ok\"></span>" + th("正在操作") + "") : ("<span class=\"dot ok\"></span>" + th("就绪") + "");
       document.getElementById('s-clip').textContent = String(s.clipboardProvider).indexOf('virtual') >= 0 ? t("隔离（默认）") : t("系统全局");
-      document.getElementById('s-mouse').textContent = s.ambientMouse && s.ambientMouse.enabled ? t("开启 · 只悬停不点击") : t("关闭");
+      var idle = s.slots && s.slots.idle ? s.slots.idle.active : 'idle.drift';
+      document.getElementById('s-mouse').textContent = s.ambientMouse && s.ambientMouse.enabled ? (idle === 'idle.drift' ? t("开启 · 只悬停不点击") : idle === 'idle.adaptive' ? t("开启 · 自适应") : t("开启") + ' · ' + idle) : t("关闭");
       document.getElementById('s-today').textContent = s.todayActions + t(" 次");
       document.getElementById('s-ch').innerHTML = pending ? '<span class="status warn">' + pending + (" " + th("个需要处理") + "</span>") : ("<span class=\"status ok\">" + th("无") + "</span>");
     }).catch(function(){ document.getElementById('s-ai').innerHTML = ("<span class=\"dot bad\"></span>" + th("内核未连接") + ""); });

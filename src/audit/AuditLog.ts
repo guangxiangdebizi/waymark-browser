@@ -17,7 +17,7 @@ export interface AuditEvent {
   before?: { url: string; title: string };
   after?: { url: string; title: string };
   durationMs?: number;
-  status: 'started' | 'success' | 'failure' | 'info';
+  status: 'started' | 'success' | 'failure' | 'info' | 'warning';
   error?: string;
   detail?: unknown;
   capabilities?: Array<{ id: string; version: string }>;

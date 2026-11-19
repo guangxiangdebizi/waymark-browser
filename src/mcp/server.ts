@@ -11,7 +11,7 @@ function result(value: unknown, origin?: string) {
 }
 
 export function createMcpServer(runtime: BrowserRuntime, challenges: ChallengeBroker): McpServer {
-  const server = new McpServer({ name: 'waymark', version: '0.4.0' });
+  const server = new McpServer({ name: 'waymark', version: '0.5.0' });
   const wrap = (fn: (args: any) => Promise<unknown>) => async (args: any) => {
     try { return result(await fn(args)); } catch (error) { return { ...result({ error: error instanceof Error ? error.message : String(error) }), isError: true }; }
   };
@@ -58,11 +58,10 @@ export function createMcpServer(runtime: BrowserRuntime, challenges: ChallengeBr
     description: 'Wait for visible text, a CSS selector, or a bounded duration.',
     inputSchema: { page: z.number().int(), for: z.enum(['text', 'selector', 'time']), value: z.union([z.string(), z.number()]), timeout: z.number().int().max(30000).optional() }
   }, wrap(async ({ page: pageId, for: kind, value, timeout }) => {
-    const page = await runtime.getPage(pageId);
-    if (kind === 'time') { await page.waitForTimeout(Math.min(Number(value), timeout ?? 30000)); return { matched: true }; }
-    const matched = kind === 'selector'
+    if (kind === 'time') return await runtime.waitOn(pageId, async page => { await page.waitForTimeout(Math.min(Number(value), timeout ?? 30000)); return { matched: true }; });
+    const matched = await runtime.waitOn(pageId, async page => kind === 'selector'
       ? await page.waitForSelector(String(value), { timeout: timeout ?? 10000 }).then(() => true).catch(() => false)
-      : await page.getByText(String(value)).first().waitFor({ timeout: timeout ?? 10000 }).then(() => true).catch(() => false);
+      : await page.getByText(String(value)).first().waitFor({ timeout: timeout ?? 10000 }).then(() => true).catch(() => false));
     runtime.audit.record({ pageId, action: 'wait', target: { for: kind, value: kind === 'time' ? Number(value) : String(value).slice(0, 200) }, status: matched ? 'success' : 'failure', detail: { matched } });
     return { matched };
   }));

@@ -33,7 +33,7 @@ node run_waymark.mjs --form dynamicForm --n 10 --label waymark
 # browser-use 1.x with default settings (text-only, no judge)
 python run_browser_use.py --form simpleForm --n 10 --label browser_use
 python run_browser_use.py --form dynamicForm --n 10 --label browser_use
-python score.py browser_use waymark
+python score.py browser_use waymark waymark05    # waymark = 0.4.0, waymark05 = 0.5.0
 ```
 
 Options for `run_waymark.mjs`: `--concurrency 4` (app instances), `--ambient 0|1` (ambient pointer), `--model`.
