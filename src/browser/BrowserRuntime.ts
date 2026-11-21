@@ -371,10 +371,19 @@ export class BrowserRuntime {
       window.__agentRefSeq = window.__agentRefSeq || 0;
       const items = [];
       for (const el of Array.from(document.querySelectorAll(selector))) {
-        if (!visible(el)) continue;
         if (el.type === 'hidden') continue;
-        let ref = el.getAttribute('data-agent-ref');
-        if (!ref) { ref = 'e' + (++window.__agentRefSeq); el.setAttribute('data-agent-ref', ref); }
+        // Styled controls hide the real input and draw their own look. A checkbox/radio is clicked through its visible label;
+        // a transparent submit/button laid over a visible button face still takes the click itself.
+        let target = el;
+        if (!visible(el)) {
+          const input = el instanceof HTMLInputElement ? el : null;
+          const label = input && ['checkbox', 'radio'].includes(input.type) ? ((input.labels && input.labels[0]) || input.closest('label')) : null;
+          const r = el.getBoundingClientRect();
+          if (label && visible(label)) target = label;
+          else if (!(input && ['submit', 'button'].includes(input.type) && r.width > 1 && r.height > 1 && el.parentElement && visible(el.parentElement))) continue;
+        }
+        let ref = target.getAttribute('data-agent-ref');
+        if (!ref) { ref = 'e' + (++window.__agentRefSeq); target.setAttribute('data-agent-ref', ref); }
         const role = el.getAttribute('role') || (el instanceof HTMLInputElement ? el.type : el.tagName.toLowerCase());
         items.push({ ref, role, name: nameOf(el), state: stateOf(el) });
       }
