@@ -1,10 +1,12 @@
-import { app, BrowserWindow, WebContentsView, ipcMain, Menu, clipboard, nativeTheme, type WebContents, type Input, type MenuItemConstructorOptions } from 'electron';
+import { app, BrowserWindow, WebContentsView, ipcMain, Menu, clipboard, nativeTheme, session, type WebContents, type Input, type MenuItemConstructorOptions } from 'electron';
+import { readFileSync, writeFileSync, renameSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import v8 from 'node:v8';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadConfig, fromRoot } from '../config.js';
 import { createTranslator } from '../i18n.js';
+import { cookieUrl, restorable, type CookieRecord, type SessionCookieFile } from '../browser/Cookies.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -267,7 +269,50 @@ async function api(method: 'GET' | 'POST', path: string, body?: unknown): Promis
   return data;
 }
 
-app.whenReady().then(() => {
+
+// Session cookies (no expiry) live only in memory in Chromium, so a restart would log every site out. Like a normal
+// browser's "continue where you left off", Waymark snapshots them on every change and restores them on startup.
+// Persistent cookies are flushed to disk promptly as well, so a killed process loses nothing.
+const SESSION_COOKIE_FILE = () => join(app.getPath('userData'), 'waymark-session-cookies.json');
+
+async function restoreSessionCookies(): Promise<void> {
+  let file: SessionCookieFile | undefined;
+  try { file = JSON.parse(readFileSync(SESSION_COOKIE_FILE(), 'utf8')) as SessionCookieFile; } catch { return; }
+  const store = session.defaultSession.cookies;
+  const existing = new Set((await store.get({})).map(c => `${c.domain}|${c.path}|${c.name}`));
+  for (const cookie of restorable(file)) {
+    if (existing.has(`${cookie.domain}|${cookie.path ?? '/'}|${cookie.name}`)) continue;
+    await store.set({
+      url: cookieUrl(cookie), name: cookie.name, value: cookie.value, path: cookie.path ?? '/',
+      domain: cookie.hostOnly ? undefined : cookie.domain, secure: cookie.secure, httpOnly: cookie.httpOnly,
+      sameSite: (cookie.sameSite as 'unspecified' | 'no_restriction' | 'lax' | 'strict' | undefined) ?? 'lax'
+    }).catch(() => undefined);
+  }
+}
+
+function keepCookies(): void {
+  const store = session.defaultSession.cookies;
+  let timer: NodeJS.Timeout | undefined;
+  const save = async (): Promise<void> => {
+    timer = undefined;
+    const sessionCookies: CookieRecord[] = (await store.get({})).filter(c => c.session).map(c => ({
+      name: c.name, value: c.value, domain: c.domain ?? '', path: c.path, secure: c.secure, httpOnly: c.httpOnly,
+      sameSite: c.sameSite, hostOnly: c.hostOnly, session: true
+    }));
+    const target = SESSION_COOKIE_FILE();
+    writeFileSync(`${target}.tmp`, JSON.stringify({ savedAt: Date.now(), cookies: sessionCookies } satisfies SessionCookieFile));
+    renameSync(`${target}.tmp`, target);
+    await store.flushStore().catch(() => undefined);
+  };
+  store.on('changed', () => { timer ??= setTimeout(() => { void save().catch(() => undefined); }, 1500); });
+  app.on('before-quit', () => { if (timer) { clearTimeout(timer); void save().catch(() => undefined); } });
+}
+
+app.whenReady().then(async () => {
+  if (config.browser.persistSessionCookies !== false) {
+    await restoreSessionCookies().catch(() => undefined);
+    keepCookies();
+  }
   Menu.setApplicationMenu(null);
   const dark = nativeTheme.shouldUseDarkColors;
   shell = new BrowserWindow({

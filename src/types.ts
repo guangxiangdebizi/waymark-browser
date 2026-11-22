@@ -7,6 +7,8 @@ export interface AppConfig {
   browser: {
     executablePath: string;
     userDataDir: string;
+    /** Keep session cookies across restarts like a normal browser (default true). */
+    persistSessionCookies?: boolean;
     headless: boolean;
     settleMs: number;
     readLimit: number;

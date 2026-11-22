@@ -19,6 +19,7 @@ import { currentActor, type Actor } from '../audit/Actor.js';
 export interface InputMeter { pointerPaths: number; clicks: number; keystrokes: number; pastes: number; pacedMs: number }
 const meters = new AsyncLocalStorage<InputMeter>();
 const newMeter = (): InputMeter => ({ pointerPaths: 0, clicks: 0, keystrokes: 0, pastes: 0, pacedMs: 0 });
+import { domainMatches, readCdpCookies, toPlaywright, type CookieRecord } from './Cookies.js';
 
 export interface ActInput {
   page: number;
@@ -236,6 +237,24 @@ export class BrowserRuntime {
     this.context = undefined;
     this.pages.clear();
     await this.capabilities.close();
+  }
+
+  /** Export or import cookies. Values never go to the audit ledger, only counts and domains. */
+  async cookies(action: 'export' | 'import', options: { domains?: string[]; cookies?: CookieRecord[]; fromCdp?: string } = {}): Promise<unknown> {
+    await this.launch();
+    const context = this.context!;
+    if (action === 'export') {
+      const list = (await context.cookies()).filter(cookie => domainMatches(cookie.domain, options.domains));
+      this.audit.record({ action: 'cookies.export', status: 'success', detail: { count: list.length, domains: [...new Set(list.map(c => c.domain))] } });
+      return { count: list.length, cookies: list };
+    }
+    const source = options.cookies ?? (options.fromCdp ? await readCdpCookies(options.fromCdp) : undefined);
+    if (!source) throw new Error('import needs cookies (a JSON array) or fromCdp (a DevTools endpoint such as http://127.0.0.1:9222)');
+    const list = source.filter(cookie => cookie?.name && cookie.domain && domainMatches(cookie.domain, options.domains)).map(toPlaywright);
+    if (list.length) await context.addCookies(list);
+    const domains = [...new Set(list.map(c => c.domain))];
+    this.audit.record({ action: 'cookies.import', status: 'success', detail: { count: list.length, domains, from: options.fromCdp ? 'cdp' : 'json' } });
+    return { imported: list.length, domains };
   }
 
   async tabs(action: 'list' | 'new' | 'close' | 'active', pageId?: number, url?: string): Promise<unknown> {
