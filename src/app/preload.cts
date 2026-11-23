@@ -24,6 +24,7 @@ contextBridge.exposeInMainWorld('agentShell', {
   apiGet: (path: string) => ipcRenderer.invoke('api:get', path),
   apiPost: (path: string, body?: unknown) => ipcRenderer.invoke('api:post', path, body),
   info: () => ipcRenderer.invoke('app:info'),
+  openWindow: (kind: string) => ipcRenderer.invoke('window:open', kind),
   onTabs: subscribe('tabs:changed'),
   onPanel: subscribe('panel:changed'),
   onCommand: subscribe('shell:command')

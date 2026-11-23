@@ -185,6 +185,27 @@ def alive(pid: int | None) -> bool:
         return False
 
 
+def electron_binary(directory: Path) -> Path | None:
+    package = directory / "node_modules" / "electron"
+    try:
+        name = (package / "path.txt").read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    binary = package / "dist" / name
+    return binary if binary.exists() else None
+
+
+def launch_command(directory: Path, node: str, env: dict) -> list:
+    """Apps from 0.6 run their runtime inside Electron's main process: start Electron directly, one process tree
+    and no extra Node process. Older builds (or WAYMARK_LEGACY_DRIVER=1) use the Node launcher."""
+    binary = electron_binary(directory)
+    if binary and (directory / "dist" / "app" / "inprocess.js").exists() and env.get("WAYMARK_LEGACY_DRIVER") != "1":
+        env["WAYMARK_INPROCESS"] = "1"
+        extra = env.get("WAYMARK_ELECTRON_ARGS", "").split()
+        return [str(binary), *extra, str(Path("dist") / "app" / "electron-main.js")]
+    return [node, str(Path("dist") / "app" / "launcher.js")]
+
+
 def start(app_dir: str | None, port: int | None, foreground: bool, timeout: float, url: str | None) -> int:
     directory = find_app_dir(app_dir)
     if not directory:
@@ -208,7 +229,7 @@ def start(app_dir: str | None, port: int | None, foreground: bool, timeout: floa
             raise SystemExit("No display found. Waymark is a desktop app; on a headless server run: xvfb-run -a waymark start --foreground")
         if hasattr(os, "geteuid") and os.geteuid() == 0 and "--no-sandbox" not in env.get("WAYMARK_ELECTRON_ARGS", ""):
             env["WAYMARK_ELECTRON_ARGS"] = (env.get("WAYMARK_ELECTRON_ARGS", "") + " --no-sandbox").strip()
-    command = [node, str(Path("dist") / "app" / "launcher.js")]
+    command = launch_command(directory, node, env)
     if foreground:
         return subprocess.call(command, cwd=directory, env=env)
     log_file().parent.mkdir(parents=True, exist_ok=True)

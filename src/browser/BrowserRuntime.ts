@@ -1,6 +1,6 @@
 import { chromium, type BrowserContext, type Page } from 'playwright-core';
 import { existsSync } from 'node:fs';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import type { AppConfig, PageSummary, RefInfo, SnapshotResult } from '../types.js';
 import { fromRoot } from '../config.js';
 import { AuditLog } from '../audit/AuditLog.js';
@@ -12,6 +12,13 @@ import { AdaptivePlanner } from './IdlePlanners.js';
 import { HumanPacing, clampDelay, looksLikeCommit, type PacingContext, type PacingModel } from './Pacing.js';
 import { CAPABILITY_SLOTS, fitsSlot, type CapabilitySlot } from '../capabilities/slots.js';
 import { HumanKeyboard, type KeyboardActor } from './HumanKeyboard.js';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { currentActor, type Actor } from '../audit/Actor.js';
+
+/** What the local automation layer did for one agent step, so the dashboard can count it. */
+export interface InputMeter { pointerPaths: number; clicks: number; keystrokes: number; pastes: number; pacedMs: number }
+const meters = new AsyncLocalStorage<InputMeter>();
+const newMeter = (): InputMeter => ({ pointerPaths: 0, clicks: 0, keystrokes: 0, pastes: 0, pacedMs: 0 });
 
 export interface ActInput {
   page: number;
@@ -100,6 +107,61 @@ export class BrowserRuntime {
     }, audit);
   }
 
+  /** Pages opened by an agent call, and the hook the desktop shell uses to badge the tab with that agent. */
+  private openers = new Map<number, Actor>();
+  private tabOpenedHook?: (pageId: number, actor: Actor | undefined, page: Page) => void | Promise<void>;
+  setTabOpenedHook(hook: (pageId: number, actor: Actor | undefined, page: Page) => void | Promise<void>): void { this.tabOpenedHook = hook; }
+  openerOf(pageId: number): Actor | undefined { return this.openers.get(pageId); }
+
+  private async pointerInvoke(input: PointerInput): Promise<void> {
+    const meter = meters.getStore();
+    if (meter) { meter.pointerPaths++; meter.clicks++; }
+    await this.actor.invoke(input);
+  }
+  private async pointerMove(input: PointerInput, purpose?: 'click' | 'hover' | 'ambient'): Promise<void> {
+    const meter = meters.getStore();
+    if (meter) meter.pointerPaths++;
+    await this.actor.move(input, purpose);
+  }
+  private async typeText(page: Page, text: string): Promise<void> {
+    const meter = meters.getStore();
+    if (meter) meter.keystrokes += [...text].length;
+    await this.keyboard.type(page, text);
+  }
+
+  /**
+   * A small JPEG of the page right after a step, linked to the ledger entry. It runs beside the agent's next step
+   * instead of in front of it (the step's result is not held back), at most one capture per tab at a time, and the
+   * bytes go straight to disk.
+   */
+  private capturing = new Set<Page>();
+  private async capturePage(page: Page, event: { id: string }): Promise<void> {
+    const options = this.config.audit;
+    if (!options.captureScreenshots || page.isClosed() || this.capturing.has(page)) return;
+    this.capturing.add(page);
+    void page.screenshot({ type: 'jpeg', quality: options.screenshotQuality ?? 50, scale: 'css', timeout: 4000, caret: 'initial' })
+      .then(bytes => { const name = this.audit.saveScreenshot(event.id, bytes); if (name) this.audit.attachScreenshot(event as Parameters<AuditLog['attachScreenshot']>[0], name); })
+      .catch(() => undefined /* a page that cannot be captured right now just has no picture */)
+      .finally(() => this.capturing.delete(page));
+  }
+
+  /** Save a PNG (or JPEG) of a tab on request; inline returns the bytes as base64 for callers on other machines. */
+  async screenshot(pageId: number, options: { fullPage?: boolean; format?: 'png' | 'jpeg'; inline?: boolean } = {}): Promise<unknown> {
+    await this.launch();
+    this.assertAllowed(pageId);
+    const page = this.page(pageId);
+    await this.claim(pageId);
+    try {
+      const type = options.format === 'jpeg' ? 'jpeg' : 'png';
+      const bytes = await page.screenshot({ type, fullPage: Boolean(options.fullPage), timeout: 15000, ...(type === 'jpeg' ? { quality: 80 } : {}) });
+      const state = await this.pageState(page);
+      const event = this.audit.record({ pageId, action: 'screenshot', before: state, after: state, status: 'success', detail: { bytes: bytes.length, fullPage: Boolean(options.fullPage), format: type } });
+      const file = this.audit.saveScreenshot(event.id, bytes, type === 'jpeg' ? 'jpg' : 'png');
+      if (file) this.audit.attachScreenshot(event, file);
+      return { pageId, ...state, traceId: event.id, file, path: file ? this.audit.screenshotPath(file) : undefined, bytes: bytes.length, ...(options.inline ? { base64: bytes.toString('base64') } : {}) };
+    } finally { this.release(pageId); }
+  }
+
   /** Start of every agent call on a page: idle behaviour stops and undoes itself before the agent touches anything. */
   private async claim(pageId: number): Promise<void> {
     await this.ambient.yield();
@@ -107,7 +169,52 @@ export class BrowserRuntime {
   }
 
   /** End of an agent call: the agent now holds this page's state, and thinks from here. */
+  /**
+   * Background tabs give back what they can rebuild cheaply. A tab nobody has looked at or driven for a while gets a
+   * memory-pressure signal: Blink drops decoded images, font and resource caches, V8 runs a full GC. Nothing is
+   * reloaded or discarded, the DOM, scroll position, form input and the agent's refs all stay, so switching back is
+   * instant. The visible tab, tabs an agent is working in and tabs touched recently are never trimmed.
+   */
+  private trimmed = new WeakSet<Page>();
+  private touched = new Map<number, number>();
+  private trimTimer?: NodeJS.Timeout;
+  /** Tabs the user may be looking at; when unsure the resolver returns more, never fewer. */
+  private visibleTabs: () => Promise<number[]> = async () => [this.activePage];
+  setVisibleTabResolver(resolver: () => Promise<number[]>): void { this.visibleTabs = resolver; }
+  private startTrimmer(): void {
+    const after = (this.config.browser.memory?.trimBackgroundTabsAfterSec ?? 120) * 1000;
+    if (!after || this.trimTimer) return;
+    this.trimTimer = setInterval(() => { void this.trimBackground(after).catch(() => undefined); }, Math.min(30000, Math.max(1000, after / 4)));
+    this.trimTimer.unref?.();
+  }
+  /** Returns how many tabs were trimmed this pass. */
+  async trimBackground(afterMs: number): Promise<number> {
+    if (!this.context) return 0;
+    let visible: number[];
+    try { visible = await this.visibleTabs(); } catch { return 0; }
+    let count = 0;
+    for (const [id, page] of this.pages) {
+      if (page.isClosed() || visible.includes(id) || this.busyPages.has(id) || this.waiting.has(id) || this.trimmed.has(page)) continue;
+      if (Date.now() - (this.touched.get(id) ?? 0) < afterMs) continue;
+      try {
+        const session = await this.context.newCDPSession(page);
+        try { await session.send('Memory.simulatePressureNotification' as never, { level: 'critical' } as never); }
+        finally { await session.detach().catch(() => undefined); }
+        this.trimmed.add(page);
+        count++;
+      } catch { /* a tab that cannot take the signal keeps its memory */ }
+    }
+    return count;
+  }
+  /** Any use of a tab (agent call, activation) makes it eligible for trimming again only after it goes quiet. */
+  private touch(pageId: number): void {
+    this.touched.set(pageId, Date.now());
+    const page = this.pages.get(pageId);
+    if (page) this.trimmed.delete(page);
+  }
+
   private release(pageId: number, shownLines?: number): void {
+    this.touch(pageId);
     this.busyPages.delete(pageId);
     this.observedAt.set(pageId, Date.now());
     if (shownLines !== undefined) this.shown.set(pageId, shownLines);
@@ -131,6 +238,8 @@ export class BrowserRuntime {
     let ms = 0;
     try { ms = clampDelay(await this.pacing.delay(full)); } catch { ms = 0; }
     if (ms > 0) await new Promise(resolve => setTimeout(resolve, Math.round(ms)));
+    const meter = meters.getStore();
+    if (meter) meter.pacedMs += Math.round(ms);
     return Math.round(ms);
   }
 
@@ -160,11 +269,13 @@ export class BrowserRuntime {
     this.context.on('page', page => this.register(page));
     if (!this.pages.size) await this.newPage('about:blank');
     if (this.config.browser.ambientMouse.enabled) this.ambient.start();
+    this.startTrimmer();
     this.audit.record({ action: 'browser.launch', status: 'info', detail: { executablePath, driver: this.driver ? 'electron' : 'chromium', headless: this.config.browser.headless } });
   }
 
   async close(): Promise<void> {
     this.ambient.stop();
+    if (this.trimTimer) clearInterval(this.trimTimer);
     if (this.driver) await this.driver.close();
     else if (this.context) await this.context.close();
     this.context = undefined;
@@ -178,8 +289,11 @@ export class BrowserRuntime {
     if (action !== 'list') await this.ambient.yield();
     if (action === 'new') {
       const created = await this.newPage(url ?? 'about:blank');
+      const actor = currentActor();
+      if (actor) this.openers.set(created.id, actor);
       this.audit.record({ pageId: created.id, action: 'tabs.new', target: { url }, after: { url: created.url, title: created.title }, status: 'success' });
-      return created;
+      try { await this.tabOpenedHook?.(created.id, actor, this.page(created.id)); } catch { /* badge only */ }
+      return { ...created, openedBy: actor ? { agent: actor.agent, session: actor.session, window: actor.window } : undefined };
     }
     if (action === 'active') {
       if (!pageId) throw new Error('page is required for tabs.active');
@@ -187,6 +301,7 @@ export class BrowserRuntime {
       await page.bringToFront();
       await this.pageActivator?.(page);
       this.activePage = pageId;
+      this.touch(pageId);
       this.audit.record({ pageId, action: 'tabs.active', status: 'success' });
       return { pageId };
     }
@@ -227,9 +342,11 @@ export class BrowserRuntime {
       shownLines = 2;
       const after = await this.pageState(page);
       const event = this.audit.record({ pageId, action: 'navigate', target: { action, url }, before, after, durationMs: Date.now() - start, status: 'success' });
+      await this.capturePage(page, event);
       return { pageId, ...after, traceId: event.id, challenge: await this.settledHook(pageId) };
     } catch (error) {
-      this.audit.record({ pageId, action: 'navigate', target: { action, url }, before, durationMs: Date.now() - start, status: 'failure', error: message(error) });
+      const failed = this.audit.record({ pageId, action: 'navigate', target: { action, url }, before, durationMs: Date.now() - start, status: 'failure', error: message(error) });
+      await this.capturePage(page, failed);
       throw error;
     } finally { this.release(pageId, shownLines); }
   }
@@ -245,7 +362,7 @@ export class BrowserRuntime {
       const { saved, refs } = await this.capture(pageId, page);
       shownLines = saved.text.split('\n').length;
       this.fresh.delete(pageId);
-      this.audit.record({ pageId, action: 'snapshot', target: { snapshotId: saved.id, refCount: refs.size }, basisSnapshotId: saved.id, basisSnapshotHash: saved.hash, before: { url: saved.url, title: saved.title }, after: { url: saved.url, title: saved.title }, status: 'success' });
+      this.audit.record({ pageId, action: 'snapshot', target: { snapshotId: saved.id, refCount: refs.size }, basisSnapshotId: saved.id, basisSnapshotHash: saved.hash, before: { url: saved.url, title: saved.title }, after: { url: saved.url, title: saved.title }, status: 'success', detail: { textLength: saved.text.length, lines: shownLines, contentHash: contentHash(saved.text) } });
       return saved;
     } finally { this.release(pageId, shownLines); }
   }
@@ -324,6 +441,9 @@ export class BrowserRuntime {
     this.refs.set(pageId, refs);
     const saved = this.audit.saveSnapshot({ id, pageId, url: page.url(), title: await page.title(), text: lines.join('\n'), refs: Object.fromEntries(refs) });
     this.snapshotHashes.set(id, saved.hash);
+    // Only snapshots that a live ref still points at are needed as a trace basis; drop the rest (no growth over time).
+    const live = new Set([...this.refs.values()].flatMap(map => [...map.values()].map(info => info.snapshotId)));
+    for (const key of this.snapshotHashes.keys()) if (!live.has(key)) this.snapshotHashes.delete(key);
     return { saved, refs };
   }
 
@@ -376,6 +496,12 @@ export class BrowserRuntime {
   }
 
   async act(input: ActInput): Promise<unknown> {
+    return await meters.run(newMeter(), () => this.actMetered(input));
+  }
+
+  private meter(): InputMeter | undefined { const meter = meters.getStore(); return meter ? { ...meter } : undefined; }
+
+  private async actMetered(input: ActInput): Promise<unknown> {
     await this.launch();
     this.assertAllowed(input.page);
     this.agentPage = input.page;
@@ -396,8 +522,8 @@ export class BrowserRuntime {
       try {
         if (input.kind === 'click' || input.kind === 'hover') {
           const point = await this.pointOf(input.page, required(input.ref, 'ref'));
-          if (input.kind === 'click') await this.actor.invoke({ page, x: point.x, y: point.y });
-          else await this.actor.move({ page, x: point.x, y: point.y }, 'hover');
+          if (input.kind === 'click') await this.pointerInvoke({ page, x: point.x, y: point.y });
+          else await this.pointerMove({ page, x: point.x, y: point.y }, 'hover');
         } else if (input.kind === 'fill') {
           if (!input.fields?.length) throw new Error('fields is required for fill: [{ ref, value }]');
           for (const [index, field] of input.fields.entries()) {
@@ -413,7 +539,7 @@ export class BrowserRuntime {
           if (input.ref && kind && (kind.tag === 'SELECT' || ['checkbox', 'radio', 'date', 'time', 'datetime-local', 'month', 'week', 'color', 'range'].includes(kind.type))) await this.fillField(input.page, page, input.ref, value);
           else {
             if (input.ref) await this.focusText(input.page, page, input.ref, false);
-            await this.keyboard.type(page, value);
+            await this.typeText(page, value);
           }
         } else if (input.kind === 'paste') {
           await this.focusText(input.page, page, required(input.ref, 'ref'), false);
@@ -436,7 +562,9 @@ export class BrowserRuntime {
         if (readyState === 'loading') await page.waitForLoadState('domcontentloaded', { timeout: 5000 }).catch(() => undefined);
         await this.settle(page);
         const after = await this.pageState(page);
-        const event = this.audit.record({ pageId: input.page, action: input.kind, target, basisSnapshotId: basis?.snapshotId, basisSnapshotHash: basis?.hash, capabilities: [...capabilities, this.pacing.manifest], before, after, durationMs: Date.now() - start, status: 'success', detail: { pacedMs } });
+        if (input.kind === 'paste') { const meter = meters.getStore(); if (meter) meter.pastes++; }
+        const event = this.audit.record({ pageId: input.page, action: input.kind, target, basisSnapshotId: basis?.snapshotId, basisSnapshotHash: basis?.hash, capabilities: [...capabilities, this.pacing.manifest], before, after, durationMs: Date.now() - start, status: 'success', detail: { pacedMs, input: this.meter() } });
+        await this.capturePage(page, event);
         const changes = input.kind === 'copy' ? undefined : await this.changes(input.page, page, previous, before.url).catch(() => undefined) as { added?: string[]; changed?: string[]; snapshot?: string } | undefined;
         shownLines = changes ? changes.snapshot ? changes.snapshot.split('\n').length : (changes.added?.length ?? 0) + (changes.changed?.length ?? 0) : 0;
         // A page reached by submitting something cannot always be returned to; idle behaviour stays on it.
@@ -446,7 +574,8 @@ export class BrowserRuntime {
         }
         return { ok: true, traceId: event.id, before, after, changes, challenge: await this.settledHook(input.page) };
       } catch (error) {
-        this.audit.record({ pageId: input.page, action: input.kind, target, basisSnapshotId: basis?.snapshotId, basisSnapshotHash: basis?.hash, capabilities: [...capabilities, this.pacing.manifest], before, durationMs: Date.now() - start, status: 'failure', error: message(error), detail: { pacedMs } });
+        const failed = this.audit.record({ pageId: input.page, action: input.kind, target, basisSnapshotId: basis?.snapshotId, basisSnapshotHash: basis?.hash, capabilities: [...capabilities, this.pacing.manifest], before, durationMs: Date.now() - start, status: 'failure', error: message(error), detail: { pacedMs, input: this.meter() } });
+        await this.capturePage(page, failed);
         throw error;
       }
     } finally { this.release(input.page, shownLines); }
@@ -471,7 +600,7 @@ export class BrowserRuntime {
   /** Click into a text control, clear it if asked, leaving the caret ready for typing. */
   private async focusText(pageId: number, page: Page, ref: string, clear: boolean): Promise<void> {
     const point = await this.pointOf(pageId, ref);
-    await this.actor.invoke({ page, x: point.x, y: point.y });
+    await this.pointerInvoke({ page, x: point.x, y: point.y });
     if (clear) { await page.keyboard.press('Control+A'); await page.keyboard.press('Backspace'); }
   }
 
@@ -481,18 +610,18 @@ export class BrowserRuntime {
     if (kind.tag === 'SELECT' || kind.role === 'combobox' && kind.tag !== 'INPUT') return await this.choose(pageId, page, ref, value);
     if (kind.type === 'checkbox' || kind.type === 'radio' || kind.role === 'checkbox' || kind.role === 'radio' || kind.role === 'switch') {
       const want = kind.type === 'radio' || kind.role === 'radio' ? true : !/^(false|0|no|off|unchecked|)$/i.test(value.trim());
-      if (want !== kind.checked) { const point = await this.pointOf(pageId, ref); await this.actor.invoke({ page, x: point.x, y: point.y }); }
+      if (want !== kind.checked) { const point = await this.pointOf(pageId, ref); await this.pointerInvoke({ page, x: point.x, y: point.y }); }
       return;
     }
     if (['date', 'time', 'datetime-local', 'month', 'week', 'color', 'range'].includes(kind.type)) {
       const point = await this.pointOf(pageId, ref);
-      await this.actor.move({ page, x: point.x, y: point.y });
+      await this.pointerMove({ page, x: point.x, y: point.y });
       await this.locator(pageId, ref).fill(value, { timeout: this.timeout() });
       return;
     }
     if (kind.type === 'file') throw new Error('File inputs need an upload action; fill cannot set files');
     await this.focusText(pageId, page, ref, true);
-    await this.keyboard.type(page, value);
+    await this.typeText(page, value);
   }
 
   /** Choose an option by its visible label (or value): native <select>, or a custom combobox opened and picked by pointer. */
@@ -501,7 +630,7 @@ export class BrowserRuntime {
     const kind = await this.kindOf(pageId, ref);
     const point = await this.pointOf(pageId, ref);
     if (kind.tag === 'SELECT') {
-      await this.actor.move({ page, x: point.x, y: point.y });
+      await this.pointerMove({ page, x: point.x, y: point.y });
       const options = await locator.evaluate(el => Array.from((el as HTMLSelectElement).options).map(o => ({ label: (o.label || o.text).trim(), value: o.value })));
       const wanted = value.trim().toLowerCase();
       const match = options.find(o => o.label.toLowerCase() === wanted || o.value.toLowerCase() === wanted)
@@ -510,12 +639,12 @@ export class BrowserRuntime {
       await locator.selectOption({ value: match.value }, { timeout: this.timeout() });
       return;
     }
-    await this.actor.invoke({ page, x: point.x, y: point.y });
+    await this.pointerInvoke({ page, x: point.x, y: point.y });
     await this.settle(page, 150, 1500);
     const option = page.getByRole('option', { name: value }).or(page.getByRole('menuitem', { name: value })).first();
     const box = await option.boundingBox({ timeout: this.timeout() }).catch(() => null);
     if (!box) throw new Error(`Opened ${ref} but no visible option named "${value}"; take a snapshot to read the options`);
-    await this.actor.invoke({ page, x: box.x + box.width / 2, y: box.y + box.height / 2 });
+    await this.pointerInvoke({ page, x: box.x + box.width / 2, y: box.y + box.height / 2 });
   }
 
   /** User-held control lease: while paused every agent read/write and ambient movement is refused. */
@@ -588,6 +717,8 @@ export class BrowserRuntime {
     throw new Error(`Electron page target not found: ${fragment}`);
   }
 
+  idOf(page: Page): number | undefined { return this.ids.get(page); }
+  pageIdsWithUrl(url: string): number[] { return [...this.pages.entries()].filter(([, page]) => !page.isClosed() && page.url() === url).map(([id]) => id); }
   async getPage(pageId: number): Promise<Page> { await this.launch(); return this.page(pageId); }
   lastSuccessfulActionId(): string | undefined { return this.audit.list(20).find(e => e.status === 'success' && e.pageId)?.id; }
 
@@ -608,6 +739,7 @@ export class BrowserRuntime {
     const id = this.nextPageId++;
     this.ids.set(page, id);
     this.pages.set(id, page);
+    this.touched.set(id, Date.now());
     if (!this.activePage) this.activePage = id;
     page.on('close', () => this.unregister(id));
     // A window registered before its first load (blank URL) is checked again once it has one.
@@ -625,6 +757,8 @@ export class BrowserRuntime {
     this.shown.delete(id);
     this.fresh.delete(id);
     this.pinnedPages.delete(id);
+    this.openers.delete(id);
+    this.touched.delete(id);
     if (this.activePage === id) this.activePage = order[index + 1] ?? order[index - 1] ?? 0;
   }
 
@@ -636,7 +770,11 @@ export class BrowserRuntime {
 
   private async listPages(): Promise<PageSummary[]> {
     const result: PageSummary[] = [];
-    for (const [id, page] of this.pages) if (!page.isClosed()) result.push({ id, url: page.url(), title: await page.title(), active: id === this.activePage });
+    for (const [id, page] of this.pages) {
+      if (page.isClosed()) continue;
+      const opener = this.openers.get(id);
+      result.push({ id, url: page.url(), title: await page.title(), active: id === this.activePage, ...(opener ? { openedBy: { agent: opener.agent, session: opener.session, window: opener.window } } : {}) });
+    }
     return result;
   }
 
@@ -690,7 +828,5 @@ export class BrowserRuntime {
 
 function required(value: string | undefined, name: string): string { if (!value) throw new Error(`${name} is required`); return value; }
 function message(error: unknown): string { return error instanceof Error ? error.message : String(error); }
-
-
-
-
+/** Hash of what the page showed, without the per-capture snapshot id, so identical page states compare equal. */
+function contentHash(text: string): string { return createHash('sha256').update(text.replace(/^Snapshot: .*$/m, '')).digest('hex').slice(0, 16); }

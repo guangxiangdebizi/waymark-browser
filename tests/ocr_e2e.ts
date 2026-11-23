@@ -8,7 +8,7 @@ import { ChallengeBroker } from '../src/challenge/ChallengeBroker.js';
 import { createLocalCapabilities } from '../src/capabilities/local.js';
 
 const image = readFileSync('data/ocr-smoke.png').toString('base64');
-const html = `<!doctype html><html><head><meta charset="utf-8"><title>OCR challenge</title></head><body><h1>安全验证</h1><form onsubmit="event.preventDefault();if(document.querySelector('[name=captcha]').value==='A7B2'){document.body.innerHTML='<h1>Verified challenge</h1>'}else{document.querySelector('#state').textContent='wrong'}"><img alt="captcha" src="data:image/png;base64,${image}"><input name="captcha" placeholder="验证码"><button type="submit">提交验证</button></form><div id="state"></div></body></html>`;
+const html = `<!doctype html><html><head><meta charset="utf-8"><title>OCR challenge</title></head><body><h1>安全验证</h1><form onsubmit="event.preventDefault();if(document.querySelector('[name=captcha]').value.toUpperCase()==='A7B2'){document.body.innerHTML='<h1>Verified challenge</h1>'}else{document.querySelector('#state').textContent='wrong'}"><img alt="captcha" src="data:image/png;base64,${image}"><input name="captcha" placeholder="验证码"><button type="submit">提交验证</button></form><div id="state"></div></body></html>`;
 const fixture = createServer((_req, res) => { res.setHeader('content-type', 'text/html; charset=utf-8'); res.end(html); });
 await new Promise<void>(r => fixture.listen(0, '127.0.0.1', r));
 const address = fixture.address();

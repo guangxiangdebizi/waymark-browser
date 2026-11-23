@@ -56,6 +56,23 @@ waymark audit --limit 20             # what happened, when, on which page
 waymark pause / waymark resume       # take the browser back from agents
 ```
 
+### Who is driving
+
+Every command tells Waymark who ran it, so the trace can be read per agent. `--agent NAME` (or `WAYMARK_AGENT`) says it
+explicitly; otherwise the CLI recognises the agent from its own environment (`AI_AGENT`, `CLAUDECODE`, `CODEX_*`,
+`WORKBUDDY_*`, `CURSOR_AGENT`, ...) and reports `human` when run in an interactive terminal. `--session` /
+`WAYMARK_SESSION` groups commands into one session (an agent's own session id is used when it exports one), and
+`--window` / `WAYMARK_WINDOW` labels the window or worker. Nothing is guessed: with no marker and no terminal the agent
+is `unknown`. Check with `waymark whoami`. Details: [docs/provenance.md](../docs/provenance.md).
+
+```bash
+export WAYMARK_AGENT=codex WAYMARK_SESSION=refund-batch-7 WAYMARK_WINDOW="codex #2"
+waymark open https://example.com
+waymark sessions --of codex          # this session, with its tabs and steps
+waymark session s:refund-batch-7     # every step, with errors
+waymark stats --days 7               # ddddocr runs, pointer paths, tokens, suggestions
+```
+
 All commands accept `--json` for machine-readable output and `--url` (or `WAYMARK_URL`) to target another instance. `waymark call TOOL '{"json": "args"}'` reaches any MCP tool directly.
 
 | Command | What it does |
@@ -68,11 +85,18 @@ All commands accept `--json` for machine-readable output and `--url` (or `WAYMAR
 | `audit`, `trace ID` | Action ledger and the snapshot behind one action |
 | `challenge [action] [id]` | Inspect or advance CAPTCHA jobs |
 | `pause`, `resume` | User control lease: agents are refused while paused |
+| `activate PAGE`, `screenshot PAGE [-o FILE] [--full]` | Bring a tab to the front; save a screenshot |
+| `whoami`, `name LABEL` | How Waymark identifies you; name your session in the trace |
+| `agents`, `sessions [--of AGENT] [-q TEXT]`, `session KEY` | Which agents used Waymark, their sessions, and every step of one session |
+| `stats [--days N] [--of AGENT]`, `insights` | Statistics and improvement suggestions |
+| `usage --input N --output N [--model M]` | Report the model tokens your session spent |
+| `manager`, `dashboard` | Open the agent manager or the insights window |
+| `prune --days N [--yes]` | Delete trace entries older than N days (dry run without `--yes`) |
 | `mcp [--autostart]` | stdio MCP bridge |
 | `tools`, `call` | Raw MCP access |
 
 ## 中文说明
 
-`waymark-browser` 是开源 AI 浏览器 Waymark 的命令行工具：一条命令安装并启动浏览器、在终端里打开网页/点击/填写/读取、查看 AI 的每一步操作记录，并为只支持 stdio 的 MCP 客户端提供桥接。安装 `waymark-browser[ocr]` 可启用本地 ddddocr 识别文字验证码。需要 Node.js 22 及以上。
+`waymark-browser` 是开源 AI 浏览器 Waymark 的命令行工具：一条命令安装并启动浏览器、在终端里打开网页/点击/填写/选择/截图/读取、查看每个 agent（Claude Code、Codex、WorkBuddy……）在哪些会话和标签页里做了什么（`waymark agents / sessions / session`）、查看统计与改进建议（`waymark stats`），并为只支持 stdio 的 MCP 客户端提供桥接。所有命令都支持 `--json`，方便 agent 调用。安装 `waymark-browser[ocr]` 可启用本地 ddddocr 识别文字验证码。需要 Node.js 22 及以上。
 
 License: MIT

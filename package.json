@@ -35,7 +35,10 @@
     "test:ocr": "node scripts/run-ocr-tests.mjs",
     "app": "npm run build && node dist/app/launcher.js",
     "test:electron": "tsx tests/electron_mcp_e2e.ts",
-    "test:i18n": "tsx tests/localization_e2e.ts"
+    "test:i18n": "tsx tests/localization_e2e.ts",
+    "test:provenance": "tsx tests/provenance_e2e.ts",
+    "test:inprocess": "tsx tests/inprocess_e2e.ts",
+    "bench:memory": "node benchmarks/memory/bench.mjs"
   },
   "engines": {
     "node": ">=22"

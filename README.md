@@ -66,6 +66,8 @@ Method, caveats and raw data: [docs/benchmark-agentshield.md](docs/benchmark-age
 - **A real browser window you can use.** Tabs, omnibox, back/forward, context menus and shortcuts all work. The pages the agent works in are ordinary tabs, marked with an `AI` badge.
 - **Eight interface languages.** English (default), Simplified Chinese, Japanese, Korean, Spanish, French, German and Portuguese. Choose **Settings → Language**, or use the selector on the start page or audit page. Your choice is saved across restarts.
 - **MCP endpoint for any agent.** `tabs`, `navigate`, `snapshot`, `read`, `act`, `wait`, `challenge`, `audit`, `capabilities`. Works with Claude Code, Codex, Cursor and anything that speaks MCP over HTTP or stdio.
+- **Many agents, one browser, every step attributed.** Claude Code, Codex, WorkBuddy, scripts and you can work in Waymark at the same time. Each step records which agent did it (and how that was known: declared, MCP clientInfo, the agent's environment, a terminal), which of its sessions and windows, in which tab. The **agent manager** window (Ctrl+Shift+M, `/agents`) browses agent → session → tab → step with screenshots and the snapshot behind each step; tabs an agent opened carry its name. See [docs/provenance.md](docs/provenance.md).
+- **Insights you can act on.** The **insights** window (Ctrl+Shift+D, `/insights`, `waymark stats`) counts what Waymark did for the agents (ddddocr solves, human pointer paths and keystrokes, idle behaviour, CAPTCHAs met), compares agents, estimates browser tokens and the tokens Waymark saved (always labelled as estimates, with the formula), and suggests improvements: redundant snapshots, repeated URLs and step sequences worth scripting, failure hot spots, slow sites.
 - **Traceable actions.** Every navigation, click, fill and read is written to a local ledger. Each entry records the session, before and after URLs, duration, the provider that ran it, and the SHA-256 of the snapshot it was based on. Click any step in the side panel or on `/audit` to see the element the agent targeted.
 - **Isolated input by default.** Agent mouse and keyboard events go only to the target tab. Clipboard operations go to a per-session virtual clipboard, so your system clipboard and cursor stay yours. A global clipboard mode is one switch away.
 - **Idle behaviour you can trust.** While the agent thinks, the pointer behaves like a person deciding: it reads, rests, scrolls and now and then glances at another page. Before the agent's next step everything is undone and the agent finds the page exactly as it left it. Checkout, sign-in, payment and application pages, unsaved forms and your own protected sites are never left.
@@ -129,7 +131,12 @@ waymark click 2 e1
 waymark read 2 --limit 2000
 waymark audit                        # the ledger, newest last
 waymark pause                        # agents are refused until `waymark resume`
+waymark --agent codex screenshot 2 -o page.png
+waymark sessions --of codex          # what each agent did, session by session
+waymark stats                        # automation counts, tokens, suggestions
 ```
+
+Every command accepts `--json`, and records who ran it (`--agent`, or detected from the agent's environment; `human` in a terminal).
 
 See [`cli/README.md`](cli/README.md) for every command.
 
@@ -139,7 +146,11 @@ UI language does not change website content, user input, raw audit records or MC
 
 | Tool | Purpose |
 |---|---|
-| `name_session` | Label the agent session; the name is attached to every ledger entry |
+| `name_session` | Label the agent session (and optionally declare `agent` and `window`); the name is attached to every ledger entry |
+| `whoami` | How Waymark identifies this caller |
+| `screenshot` | Save a tab's screenshot to the trace folder (or return it inline) |
+| `stats` | Per-agent work, automation counts, token estimates and suggestions |
+| `report_usage` | Report the model tokens the session spent, shown next to Waymark's estimates |
 | `tabs` | list / new / active / close |
 | `navigate` | url / back / forward / reload; returns any detected challenge |
 | `snapshot` | Elements a person can see, with refs (`e1`, `e2`, ...), labels and state (selected option, checked, filled) |

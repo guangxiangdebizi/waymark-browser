@@ -33,6 +33,19 @@ jobs:
           xvfb-run -a node dist/app/launcher.js > app.log 2>&1 &
           for i in $(seq 1 60); do curl -sf http://127.0.0.1:9510/health && break; sleep 1; done
           npm run test:electron
+      - name: Production layout (runtime inside Electron's main process)
+        if: runner.os == 'Linux'
+        env:
+          WAYMARK_ELECTRON_ARGS: --no-sandbox --disable-gpu
+        run: xvfb-run -a npx tsx tests/inprocess_e2e.ts
+      - name: Agent provenance end-to-end (three agents, ddddocr, manager and insights windows)
+        if: runner.os == 'Linux'
+        env:
+          WAYMARK_ELECTRON_ARGS: --no-sandbox --disable-gpu
+        run: |
+          pip install ddddocr pillow > /dev/null
+          python python/generate_ocr_fixture.py
+          WAYMARK_PYTHON=$(which python) xvfb-run -a -s '-screen 0 1600x1100x24' npx tsx tests/provenance_e2e.ts
       - name: Language switching and English screenshots
         if: runner.os == 'Linux'
         env:
