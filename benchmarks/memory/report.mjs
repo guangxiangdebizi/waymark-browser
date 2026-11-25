@@ -35,9 +35,9 @@ for (const [key, label] of ablations) {
   if (!r) continue;
   lines.push(`| ${label} | ${fmt(r.scenarios?.idle?.privateMB)} (${pct(mem(cur, 'idle'), r.scenarios?.idle?.privateMB)}) | ${fmt(r.scenarios?.tab5?.privateMB)} | ${fmt(r.scenarios?.idleAfterWork?.privateMB)} | ${fmt(r.peak?.privateMB)} | click ${fmt(r.speed?.act_click_ms?.median)} ms, snapshot ${fmt(r.speed?.snapshotMs?.median)} ms, cold ${fmt(r.speed?.coldStartMs)} ms |`);
 }
-if (results['trim-on'] && results['trim-off']) {
-  lines.push('', '## Background tab trimming (5 tabs, 60 s in the background)', '', '| | tab5 right after opening | tab5 after 60 s | restore + snapshot (ms) |', '|---|---|---|---|');
-  for (const key of ['trim-off', 'trim-on', 'baseline-later']) if (results[key]) lines.push(`| ${key} | ${fmt(results[key].scenarios?.tab5?.privateMB)} | ${fmt(results[key].scenarios?.tab5Later?.privateMB)} | ${fmt(results[key].speed?.tabRestoreMs)} |`);
+if (results['new-later'] || results['trim-on']) {
+  lines.push('', '## Five tabs, then 60 s in the background', '', '| | tab5 right after opening | tab5 after 60 s | restore + snapshot (ms) |', '|---|---|---|---|');
+  for (const key of ['new-later', 'trim-off', 'trim-on', 'baseline-later']) if (results[key]) lines.push(`| ${key} | ${fmt(results[key].scenarios?.tab5?.privateMB)} | ${fmt(results[key].scenarios?.tab5Later?.privateMB)} | ${fmt(results[key].speed?.tabRestoreMs)} |`);
 }
 const cold = name => { const rs = Object.entries(results).filter(([k]) => k.startsWith(`cold-captcha-${name}-`)).map(([, v]) => v); return rs.length ? { ms: median(rs.map(r => r.speed?.coldCaptchaMs)), status: rs.map(r => r.speed?.coldCaptchaStatus).join('/'), mb: median(rs.map(r => r.scenarios?.afterColdCaptcha?.privateMB)) } : undefined; };
 if (cold('agent')) {

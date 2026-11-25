@@ -29,8 +29,7 @@ export async function startInProcess(config: AppConfig, userData: string, shell:
     close: id => call('close', id),
     setOwner: (id, owner) => call('setOwner', id, owner),
     setAgent: (id, label) => call('setAgent', id, label),
-    openWindow: (kind, query) => call('openWindow', kind, query),
-    visibleTab: () => call('visibleTab')
+    openWindow: (kind, query) => call('openWindow', kind, query)
   };
   const booted = await bootRuntime(config, context, bridge, async () => { quit(); });
   return {

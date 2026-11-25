@@ -190,7 +190,18 @@ async function runWaymark() {
         { kind: 'type', ref: ref('Note'), value: 'please ring twice' },
         { kind: 'click', ref: ref('Send order') }
       ]) {
-        const r = await app.call('act', { page: form, ...step });
+        let r;
+        try { r = await app.call('act', { page: form, ...step }); }
+        catch (error) {
+          // Like an agent would: take a fresh snapshot and try once more; counted, so a regression still shows.
+          result.actRetries = [...(result.actRetries ?? []), `${step.kind}: ${String(error.message).slice(0, 80)}`];
+          const fresh = Object.values((await app.call('snapshot', { page: form })).refs);
+          const name = step.kind === 'fill' ? null : refs.find(x => x.ref === step.ref)?.name;
+          const again = step.kind === 'fill'
+            ? { ...step, fields: step.fields.map(f => ({ ...f, ref: fresh.find(x => x.name === refs.find(y => y.ref === f.ref)?.name)?.ref ?? f.ref })) }
+            : { ...step, ref: fresh.find(x => x.name === name)?.ref ?? step.ref };
+          r = await app.call('act', { page: form, ...again });
+        }
         const trace = await app.call('audit', { action: 'get', id: r.traceId });
         actMs.push({ kind: step.kind, execMs: trace.event.durationMs, pacedMs: trace.event.detail?.pacedMs ?? 0 });
       }

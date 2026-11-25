@@ -27,8 +27,8 @@ plan('ablate-network-process', ['--config', JSON.stringify({ browser: { memory: 
 plan('ablate-semi-space-32', [], { WAYMARK_SEMI_SPACE_MB: '32' });
 plan('ablate-eager-cv2', [], { WAYMARK_OCR_LAZY_CV2: '0' });
 plan('ablate-no-screenshots', ['--config', JSON.stringify({ audit: { captureScreenshots: false } })]);
-plan('trim-on', ['--later', '60000', '--config', JSON.stringify({ browser: { memory: { trimBackgroundTabsAfterSec: 20 } } })]);
-plan('trim-off', ['--later', '60000', '--config', JSON.stringify({ browser: { memory: { trimBackgroundTabsAfterSec: 0 } } })]);
+// Five tabs left in the background for a minute.
+plan('new-later', ['--later', '60000']);
 if (baseline) plan('baseline-later', ['--app-dir', baseline, '--later', '60000']);
 // OCR warm-up policies: the very first agent action opens a CAPTCHA page.
 for (let i = 1; i <= repeat; i++) {

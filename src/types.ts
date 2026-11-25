@@ -20,7 +20,7 @@ export interface AppConfig {
     /** Overrides for the human keyboard's timing model (see DEFAULT_TYPING). */
     typing?: Partial<import('./browser/HumanKeyboard.js').TypingOptions>;
     /** Memory housekeeping that never costs speed; see docs/memory.md. */
-    memory?: { trimBackgroundTabsAfterSec?: number; networkServiceInProcess?: boolean };
+    memory?: { networkServiceInProcess?: boolean };
     /** Per-step timeout for locating and acting on an element (default 5000 ms). */
     actionTimeoutMs?: number;
   };

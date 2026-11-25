@@ -20,8 +20,7 @@ export async function startWaymark() {
     close: id => shell('close', id),
     setOwner: (id, owner) => shell('setOwner', id, owner),
     setAgent: (id, label) => shell('setAgent', id, label),
-    openWindow: (kind, query) => shell('openWindow', kind, query),
-    visibleTab: () => shell('visibleTab')
+    openWindow: (kind, query) => shell('openWindow', kind, query)
   };
   const { runtime, server, capabilities } = await bootRuntime(config, electronApp.context(), bridge, () => electronApp.close());
   const closed = new Promise<void>(resolveClose => electronApp.once('close', resolveClose)).then(async () => {

@@ -214,7 +214,10 @@ ${esc(tab.url)}" style="flex-basis:${width}px">
     const card = $('#control-card');
     card.classList.toggle('paused', Boolean(status.paused));
     $('#control-title').textContent = status.paused ? t("AI 已暂停，浏览器由你控制") : status.busy ? t("AI 正在操作浏览器") : t("AI 可以操作浏览器");
-    $('#control-sub').textContent = t("会话 {0} · {1} 个标签页 · 今日 {2} 次动作", [status.session, status.tabs, status.todayActions]);
+    // Several agents can work at once: name the ones active in the last minutes instead of a single global session.
+    const agents = (status.activeAgents || []).map(agent => agent.label).join(', ');
+    const who = status.session && status.session !== 'default' ? status.session : agents || status.session;
+    $('#control-sub').textContent = t("会话 {0} · {1} 个标签页 · 今日 {2} 次动作", [who, status.tabs, status.todayActions]);
     const pause = $('#pause-btn');
     pause.textContent = status.paused ? t("恢复 AI") : t("暂停 AI");
     pause.className = status.paused ? 'btn primary' : 'btn';

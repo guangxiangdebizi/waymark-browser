@@ -18,7 +18,6 @@ export interface ShellBridge {
   setOwner(id: number, owner: 'agent' | 'user'): Promise<void>;
   setAgent(id: number, label: string): Promise<void>;
   openWindow(kind: 'agents' | 'insights', query: string): Promise<boolean>;
-  visibleTab(): Promise<{ id: number; url: string } | null>;
 }
 
 /**
@@ -42,13 +41,6 @@ export async function bootRuntime(config: AppConfig, context: BrowserContext, br
     },
     activate: async page => { const id = pageToWebContents.get(page); if (id) await bridge.activate(id); },
     close: async page => { const id = pageToWebContents.get(page); if (id) await bridge.close(id); }
-  });
-  runtime.setVisibleTabResolver(async () => {
-    const visible = await bridge.visibleTab();
-    if (!visible) return [];
-    for (const [page, id] of pageToWebContents) if (id === visible.id) { const pageId = runtime.idOf(page); return pageId ? [pageId] : []; }
-    // A tab the user opened is not in the map: every tab showing the same URL counts as visible.
-    return runtime.pageIdsWithUrl(visible.url);
   });
   runtime.setTabOpenedHook(async (_pageId, actor, page) => {
     const id = pageToWebContents.get(page);

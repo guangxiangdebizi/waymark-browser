@@ -184,6 +184,7 @@ try {
   await shell.waitForFunction(() => [...document.querySelectorAll('.tab .badge')].map(b => b.textContent).join(',').includes('Codex'));
   const badges = await shell.evaluate(() => [...document.querySelectorAll('.tab .badge')].map(b => b.textContent));
   for (const label of ['Codex', 'Claude Code', 'WorkBuddy']) assert.ok(badges.includes(label), `badge ${label}: ${badges}`);
+  await shell.screenshot({ path: join(output, 'browser-window.png') });
   void workbuddyTab;
 
   // The two windows open on their own, outside the tab strip, and agents cannot reach them.

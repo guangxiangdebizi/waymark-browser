@@ -134,15 +134,17 @@ export class BrowserRuntime {
    * instead of in front of it (the step's result is not held back), at most one capture per tab at a time, and the
    * bytes go straight to disk.
    */
-  private capturing = new Set<Page>();
+  private capturing = new Map<Page, Promise<void>>();
+  /** Input never overlaps a capture: an action waits for one still running on its tab (normally done during pacing). */
+  private async captureDone(page: Page): Promise<void> { await this.capturing.get(page); }
   private async capturePage(page: Page, event: { id: string }): Promise<void> {
     const options = this.config.audit;
     if (!options.captureScreenshots || page.isClosed() || this.capturing.has(page)) return;
-    this.capturing.add(page);
-    void page.screenshot({ type: 'jpeg', quality: options.screenshotQuality ?? 50, scale: 'css', timeout: 4000, caret: 'initial' })
+    const done = page.screenshot({ type: 'jpeg', quality: options.screenshotQuality ?? 50, scale: 'css', timeout: 4000, caret: 'initial' })
       .then(bytes => { const name = this.audit.saveScreenshot(event.id, bytes); if (name) this.audit.attachScreenshot(event as Parameters<AuditLog['attachScreenshot']>[0], name); })
       .catch(() => undefined /* a page that cannot be captured right now just has no picture */)
       .finally(() => this.capturing.delete(page));
+    this.capturing.set(page, done);
   }
 
   /** Save a PNG (or JPEG) of a tab on request; inline returns the bytes as base64 for callers on other machines. */
@@ -169,52 +171,7 @@ export class BrowserRuntime {
   }
 
   /** End of an agent call: the agent now holds this page's state, and thinks from here. */
-  /**
-   * Background tabs give back what they can rebuild cheaply. A tab nobody has looked at or driven for a while gets a
-   * memory-pressure signal: Blink drops decoded images, font and resource caches, V8 runs a full GC. Nothing is
-   * reloaded or discarded, the DOM, scroll position, form input and the agent's refs all stay, so switching back is
-   * instant. The visible tab, tabs an agent is working in and tabs touched recently are never trimmed.
-   */
-  private trimmed = new WeakSet<Page>();
-  private touched = new Map<number, number>();
-  private trimTimer?: NodeJS.Timeout;
-  /** Tabs the user may be looking at; when unsure the resolver returns more, never fewer. */
-  private visibleTabs: () => Promise<number[]> = async () => [this.activePage];
-  setVisibleTabResolver(resolver: () => Promise<number[]>): void { this.visibleTabs = resolver; }
-  private startTrimmer(): void {
-    const after = (this.config.browser.memory?.trimBackgroundTabsAfterSec ?? 120) * 1000;
-    if (!after || this.trimTimer) return;
-    this.trimTimer = setInterval(() => { void this.trimBackground(after).catch(() => undefined); }, Math.min(30000, Math.max(1000, after / 4)));
-    this.trimTimer.unref?.();
-  }
-  /** Returns how many tabs were trimmed this pass. */
-  async trimBackground(afterMs: number): Promise<number> {
-    if (!this.context) return 0;
-    let visible: number[];
-    try { visible = await this.visibleTabs(); } catch { return 0; }
-    let count = 0;
-    for (const [id, page] of this.pages) {
-      if (page.isClosed() || visible.includes(id) || this.busyPages.has(id) || this.waiting.has(id) || this.trimmed.has(page)) continue;
-      if (Date.now() - (this.touched.get(id) ?? 0) < afterMs) continue;
-      try {
-        const session = await this.context.newCDPSession(page);
-        try { await session.send('Memory.simulatePressureNotification' as never, { level: 'critical' } as never); }
-        finally { await session.detach().catch(() => undefined); }
-        this.trimmed.add(page);
-        count++;
-      } catch { /* a tab that cannot take the signal keeps its memory */ }
-    }
-    return count;
-  }
-  /** Any use of a tab (agent call, activation) makes it eligible for trimming again only after it goes quiet. */
-  private touch(pageId: number): void {
-    this.touched.set(pageId, Date.now());
-    const page = this.pages.get(pageId);
-    if (page) this.trimmed.delete(page);
-  }
-
   private release(pageId: number, shownLines?: number): void {
-    this.touch(pageId);
     this.busyPages.delete(pageId);
     this.observedAt.set(pageId, Date.now());
     if (shownLines !== undefined) this.shown.set(pageId, shownLines);
@@ -269,13 +226,11 @@ export class BrowserRuntime {
     this.context.on('page', page => this.register(page));
     if (!this.pages.size) await this.newPage('about:blank');
     if (this.config.browser.ambientMouse.enabled) this.ambient.start();
-    this.startTrimmer();
     this.audit.record({ action: 'browser.launch', status: 'info', detail: { executablePath, driver: this.driver ? 'electron' : 'chromium', headless: this.config.browser.headless } });
   }
 
   async close(): Promise<void> {
     this.ambient.stop();
-    if (this.trimTimer) clearInterval(this.trimTimer);
     if (this.driver) await this.driver.close();
     else if (this.context) await this.context.close();
     this.context = undefined;
@@ -301,7 +256,6 @@ export class BrowserRuntime {
       await page.bringToFront();
       await this.pageActivator?.(page);
       this.activePage = pageId;
-      this.touch(pageId);
       this.audit.record({ pageId, action: 'tabs.active', status: 'success' });
       return { pageId };
     }
@@ -517,6 +471,7 @@ export class BrowserRuntime {
       const info = input.ref ? previous?.get(input.ref) : undefined;
       const commit = looksLikeCommit(info?.role, info?.name);
       const pacedMs = input.kind === 'copy' ? 0 : await this.pace({ pageId: input.page, kind: input.kind, commit });
+      await this.captureDone(page);
       const started = this.audit.record({ pageId: input.page, action: input.kind, target, basisSnapshotId: basis?.snapshotId, basisSnapshotHash: basis?.hash, capabilities: [...capabilities, this.pacing.manifest], before, status: 'started', detail: { pacedMs } });
       const start = Date.now();
       try {
@@ -717,8 +672,6 @@ export class BrowserRuntime {
     throw new Error(`Electron page target not found: ${fragment}`);
   }
 
-  idOf(page: Page): number | undefined { return this.ids.get(page); }
-  pageIdsWithUrl(url: string): number[] { return [...this.pages.entries()].filter(([, page]) => !page.isClosed() && page.url() === url).map(([id]) => id); }
   async getPage(pageId: number): Promise<Page> { await this.launch(); return this.page(pageId); }
   lastSuccessfulActionId(): string | undefined { return this.audit.list(20).find(e => e.status === 'success' && e.pageId)?.id; }
 
@@ -739,7 +692,6 @@ export class BrowserRuntime {
     const id = this.nextPageId++;
     this.ids.set(page, id);
     this.pages.set(id, page);
-    this.touched.set(id, Date.now());
     if (!this.activePage) this.activePage = id;
     page.on('close', () => this.unregister(id));
     // A window registered before its first load (blank URL) is checked again once it has one.
@@ -758,7 +710,6 @@ export class BrowserRuntime {
     this.fresh.delete(id);
     this.pinnedPages.delete(id);
     this.openers.delete(id);
-    this.touched.delete(id);
     if (this.activePage === id) this.activePage = order[index + 1] ?? order[index - 1] ?? 0;
   }
 

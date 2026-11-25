@@ -14,7 +14,7 @@ were dropped (listed at the end).
 | Network service | HTTP stack | Runs as a thread of the browser process instead of a process (`NetworkServiceInProcess2`) |
 | GPU process | Compositing, smooth scrolling and video | Kept: software compositing would cost frame rate |
 | Renderer: window shell (tab strip, side panel) | The UI you use | Kept; polls the ledger only when it changed |
-| Renderer: start page and every tab | The pages | Kept per site (site isolation is a security boundary); idle background tabs give back caches |
+| Renderer: start page and every tab | The pages | Kept per site (site isolation is a security boundary) |
 | OCR worker (Python, ddddocr) | Local CAPTCHA recognition | Loaded when an agent connects, not at launch; OpenCV is not imported unless used; unloaded after 20 idle minutes |
 
 ## Changes
@@ -43,11 +43,7 @@ were dropped (listed at the end).
    one per tab at a time, written straight to disk as small JPEGs.
 8. **No growth over time.** Snapshot hashes were kept for every snapshot ever taken; now only those a live element ref
    still points to are kept.
-9. **Background tabs give back caches.** A tab that is not visible and has not been used for two minutes
-   (`browser.memory.trimBackgroundTabsAfterSec`) receives a memory-pressure signal: Blink drops decoded images, font
-   and resource caches, V8 collects garbage. Nothing is reloaded or discarded: DOM, scroll position, form input and
-   the agent's refs stay, so switching back is immediate. The visible tab and tabs an agent is using are never touched.
-10. **The side panel reads the timeline only when it changed** instead of fetching 200 entries every two seconds.
+9. **The side panel reads the timeline only when it changed** instead of fetching 200 entries every two seconds.
 
 ## Measuring
 
@@ -67,9 +63,33 @@ a background tab, pointer smoothness measured inside the page (mousemove events 
 minute). Memory is the private working set of the whole process tree (what Windows Task Manager shows), PSS on Linux,
 sampled every second. Waymark's page-open time includes its deliberate 250 ms settle wait and CAPTCHA detection.
 
-The measured numbers for each release are in the pull request that introduced the change.
+## Results (Windows 11, i7-10750H, 64 GB; private working set, median of 3 runs)
+
+| | v0.5.0 | 0.6 branch | change | Chrome | Edge |
+|---|---|---|---|---|---|
+| Idle (start page) | 196 MB | 154 MB | −22% | 153 MB | 227 MB |
+| After an agent task and a CAPTCHA | 428 MB | 378 MB | −12% | | |
+| Peak | 432 MB | 379 MB | −12% | | |
+| 1 / 5 tabs open, agent connected | 200 / 294 MB | 237 / 330 MB | +18% / +12% | 181 / 243 MB | 191 / 255 MB |
+| Cold start to ready | 2.0 s | 1.5 s | faster | | |
+| First CAPTCHA (navigate → solved) | 2.07 s | 0.74 s | 2.8× faster | | |
+| Snapshot, click, select, typing, tab restore, pointer smoothness | | | unchanged | | |
+
+The one row that goes up is the price of the fast first CAPTCHA: once an agent is connected the OCR worker
+(~50 MB) is resident, where v0.5 loaded it only when a CAPTCHA appeared. `challenge.ocrPrewarm: "off"` trades it back.
+Per change (one turned back at a time): runtime in its own Node process +41 MB idle and +57 MB after work, and cold
+start 2.5 s instead of 1.5 s; network service as a process +8 MB; 32 MB young generation +8 MB after work; eager
+OpenCV +8 MB with the OCR worker loaded and 0.4 s slower model load; trace screenshots cost no measurable speed.
+In a 15-minute soak the runtime heap stayed flat (45.7 → 43.9 MB).
 
 ## Tried and dropped
+
+- **Memory-pressure signal to idle background tabs** (drop decoded images and caches without reloading): no
+  measurable difference on Windows with five tabs left for a minute. Removed.
+- **One-byte sources for Playwright** (its 7 MB of bundles hold ~200 non-Latin-1 characters in comments, so V8 stores
+  them two bytes per character): transcoding at load time cut the runtime heap by 6.3 MB, but the process's memory
+  did not move beyond noise. Removed.
+- **Handing the idle OCR worker's pages back to Windows** (`EmptyWorkingSet`): private working set unchanged.
 
 - **ONNX Runtime without its memory arena** (`enable_cpu_mem_arena=False`, `enable_mem_pattern=False`): the ddddocr
   model is small; no measurable difference in the worker.

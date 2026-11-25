@@ -356,13 +356,7 @@ function openWindow(kind: 'agents' | 'insights', query = ''): boolean {
 
 ipcMain.handle('window:open', (_event, kind: string) => openWindow(kind === 'insights' ? 'insights' : 'agents'));
 
-/** The tab the user is looking at (webContents id), so background housekeeping leaves it alone. */
-function visibleTab(): { id: number; url: string } | null {
-  const state = tabs.get(activeId);
-  return state && shell && !shell.isDestroyed() && shell.isVisible() && !shell.isMinimized() ? { id: activeId, url: state.view.webContents.getURL() } : null;
-}
-
-(globalThis as any).agentShell = { createTab, activate, close, navigate, setOwner, setAgent, openWindow, visibleTab };
+(globalThis as any).agentShell = { createTab, activate, close, navigate, setOwner, setAgent, openWindow };
 
 let runtimeHandle: { shutdown(): Promise<void> } | undefined;
 async function startRuntime(): Promise<void> {
