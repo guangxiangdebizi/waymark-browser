@@ -1,5 +1,6 @@
 import { app, BrowserWindow, WebContentsView, ipcMain, Menu, clipboard, nativeTheme, type WebContents, type Input, type MenuItemConstructorOptions } from 'electron';
 import { randomUUID } from 'node:crypto';
+import v8 from 'node:v8';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadConfig, fromRoot } from '../config.js';
@@ -17,6 +18,20 @@ app.setPath('userData', fromRoot(config.browser.userDataDir));
 app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
 app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
+// The network service runs as a thread of the browser process instead of a process of its own (about 13-20 MB less,
+// no effect on page loads). browser.memory.networkServiceInProcess: false restores the separate process.
+if (config.browser.memory?.networkServiceInProcess !== false) app.commandLine.appendSwitch('enable-features', 'NetworkServiceInProcess2');
+// Production runs the agent runtime in this process (see inprocess.ts), reaching the tabs over a loopback DevTools
+// endpoint on a random port. Tests start Electron through Playwright instead and leave this off.
+const inProcess = process.env.WAYMARK_INPROCESS === '1';
+if (inProcess) {
+  // This process now holds the agent runtime. V8 sizes its young generation for throughput servers (tens of MB of
+  // semi-space); our heap churn is small request/response objects, so a 2 MB semi-space only means more, still
+  // sub-millisecond, scavenges. Web pages run in renderer processes and keep their defaults.
+  v8.setFlagsFromString(`--max-semi-space-size=${Number(process.env.WAYMARK_SEMI_SPACE_MB ?? 2)}`);
+  app.commandLine.appendSwitch('remote-debugging-port', '0');
+  app.commandLine.appendSwitch('remote-debugging-address', '127.0.0.1');
+}
 
 const API = `http://${config.server.host}:${config.server.port}`;
 const HOME_URL = `${API}/home`;
@@ -24,7 +39,7 @@ const TOP = 84;
 const PANEL_WIDTH = 380;
 
 type Owner = 'agent' | 'user';
-interface TabState { view: WebContentsView; owner: Owner; favicon?: string; loading: boolean }
+interface TabState { view: WebContentsView; owner: Owner; favicon?: string; loading: boolean; agent?: string }
 
 let shell: BrowserWindow;
 let activeId = 0;
@@ -44,7 +59,7 @@ function summary(id: number, state: TabState) {
   const contents = state.view.webContents;
   const url = contents.getURL();
   return {
-    id, url, owner: state.owner, favicon: state.favicon, loading: state.loading, active: id === activeId,
+    id, url, owner: state.owner, agent: state.agent, favicon: state.favicon, loading: state.loading, active: id === activeId,
     title: !url || url.startsWith('about:blank') ? t("新标签页") : contents.getTitle() || (url.startsWith(HOME_URL) ? t("新标签页") : url),
     canGoBack: contents.navigationHistory.canGoBack(), canGoForward: contents.navigationHistory.canGoForward(),
     isHome: url.startsWith(HOME_URL), zoom: Math.round(contents.getZoomFactor() * 100)
@@ -180,6 +195,8 @@ function shortcut(input: Input): boolean {
   if (ctrl && key === '-') { zoom(activeId, -1); return true; }
   if (ctrl && key === '0') { zoom(activeId, 0); return true; }
   if (ctrl && input.shift && key === 'b' || input.key === 'F1') { setPanel(!panelOpen); return true; }
+  if (ctrl && input.shift && key === 'm') { openWindow('agents'); return true; }
+  if (ctrl && input.shift && key === 'd') { openWindow('insights'); return true; }
   if (input.key === 'F12' || ctrl && input.shift && key === 'i') { tabs.get(activeId)?.view.webContents.toggleDevTools(); return true; }
   return false;
 }
@@ -271,6 +288,7 @@ app.whenReady().then(() => {
   shell.once('ready-to-show', () => { if (shell.isMinimized()) shell.restore(); shell.show(); shell.focus(); layout(); });
   void shell.loadFile(join(__dirname, 'shell', 'index.html'), { query: { 'agent-shell': '1', lang: config.uiLanguage || 'en' } });
   shell.webContents.on('did-finish-load', publish);
+  if (inProcess) shell.webContents.once('did-finish-load', () => { void startRuntime(); });
   shell.webContents.on('before-input-event', (event, input) => { if (shortcut(input)) event.preventDefault(); });
 });
 
@@ -310,6 +328,53 @@ function setOwner(id: number, owner: Owner): void {
   if (state) { state.owner = owner; publish(); }
 }
 
-(globalThis as any).agentShell = { createTab, activate, close, navigate, setOwner };
+/** Name the agent that opened a tab, so the tab strip says "Codex" or "Claude Code" instead of just "AI". */
+function setAgent(id: number, label: string): void {
+  const state = tabs.get(id);
+  if (state) { state.agent = String(label).slice(0, 24); publish(); }
+}
+
+/** The agent manager and the statistics dashboard open in their own windows, outside the tab strip and away from agents. */
+const windows = new Map<string, BrowserWindow>();
+function openWindow(kind: 'agents' | 'insights', query = ''): boolean {
+  const existing = windows.get(kind);
+  if (existing && !existing.isDestroyed()) { if (existing.isMinimized()) existing.restore(); existing.focus(); return true; }
+  const dark = nativeTheme.shouldUseDarkColors;
+  const win = new BrowserWindow({
+    width: kind === 'agents' ? 1360 : 1280, height: 880, minWidth: 760, minHeight: 520, show: false,
+    title: kind === 'agents' ? t("管理中心") : t("数据面板"), backgroundColor: dark ? '#1b1c22' : '#f5f6fa', autoHideMenuBar: true,
+    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true }
+  });
+  windows.set(kind, win);
+  win.on('closed', () => windows.delete(kind));
+  win.once('ready-to-show', () => win.show());
+  // waymark-window=1 keeps these windows out of the agent-controllable page list.
+  void win.loadURL(`${API}/${kind}?waymark-window=1${query ? '&' + query.replace(/^[?&]/, '') : ''}`).catch(() => undefined);
+  win.webContents.setWindowOpenHandler(({ url }) => { if (url.startsWith(API)) createTab(randomUUID(), url, 'user'); return { action: 'deny' }; });
+  return true;
+}
+
+ipcMain.handle('window:open', (_event, kind: string) => openWindow(kind === 'insights' ? 'insights' : 'agents'));
+
+(globalThis as any).agentShell = { createTab, activate, close, navigate, setOwner, setAgent, openWindow };
+
+let runtimeHandle: { shutdown(): Promise<void> } | undefined;
+async function startRuntime(): Promise<void> {
+  try {
+    const { startInProcess } = await import('./inprocess.js');
+    runtimeHandle = await startInProcess(config, app.getPath('userData'), (globalThis as any).agentShell, () => app.quit());
+  } catch (error) {
+    console.error('Waymark runtime failed to start:', error);
+    app.exit(1);
+  }
+}
+let shuttingDown = false;
+app.on('before-quit', event => {
+  if (!runtimeHandle || shuttingDown) return;
+  shuttingDown = true;
+  event.preventDefault();
+  void runtimeHandle.shutdown().finally(() => app.quit());
+});
+for (const signal of ['SIGINT', 'SIGTERM'] as const) process.on(signal, () => app.quit());
 
 app.on('window-all-closed', () => app.quit());

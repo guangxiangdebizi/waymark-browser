@@ -293,6 +293,10 @@
     ['附加', 'Details', '詳細', '세부 정보', 'Detalles', 'Détails', 'Details', 'Detalhes'],
     ['错误', 'Error', 'エラー', '오류', 'Error', 'Erreur', 'Fehler', 'Erro'],
     ['加载失败: ', 'Loading failed: ', '読み込み失敗：', '로딩 실패: ', 'Error de carga: ', 'Échec du chargement : ', 'Laden fehlgeschlagen: ', 'Falha ao carregar: '],
+    ['管理中心', 'Agent manager', 'エージェント管理', '에이전트 관리', 'Gestor de agentes', 'Gestion des agents', 'Agenten-Verwaltung', 'Gestor de agentes'],
+    ['数据面板', 'Insights', 'インサイト', '인사이트', 'Estadísticas', 'Statistiques', 'Statistiken', 'Estatísticas'],
+    ['管理中心 (Ctrl+Shift+M)', 'Agent manager (Ctrl+Shift+M)', 'エージェント管理 (Ctrl+Shift+M)', '에이전트 관리 (Ctrl+Shift+M)', 'Gestor de agentes (Ctrl+Shift+M)', 'Gestion des agents (Ctrl+Shift+M)', 'Agenten-Verwaltung (Ctrl+Shift+M)', 'Gestor de agentes (Ctrl+Shift+M)'],
+    ['数据面板 (Ctrl+Shift+D)', 'Insights (Ctrl+Shift+D)', 'インサイト (Ctrl+Shift+D)', '인사이트 (Ctrl+Shift+D)', 'Estadísticas (Ctrl+Shift+D)', 'Statistiques (Ctrl+Shift+D)', 'Statistiken (Ctrl+Shift+D)', 'Estatísticas (Ctrl+Shift+D)'],
   ];
   if (typeof module !== 'undefined' && module.exports) module.exports = rows;
   else root.WaymarkTranslations = rows;

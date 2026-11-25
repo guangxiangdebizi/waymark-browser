@@ -65,6 +65,8 @@ Waymark 的所有会话都成功提交了表单。0.5.0 没有一个会话的按
 
 - **能直接用的浏览器窗口。** 标签、地址栏、前进后退、右键菜单、快捷键都正常；AI 打开的标签带 `AI` 角标。
 - **给任意 agent 用的 MCP 接口。** 提供 `tabs`、`navigate`、`snapshot`、`read`、`act`、`wait`、`challenge`、`audit`、`capabilities`，Claude Code、Codex、Cursor 等都能接。
+- **多个 agent 同时用，每一步都知道是谁做的。** Claude Code、Codex、WorkBuddy、脚本和你可以同时使用 Waymark。每一步都记录是哪个 agent（以及怎么知道的：自报、MCP clientInfo、agent 自己的环境变量、终端）、它的哪个会话和窗口、在哪个标签页里。**管理中心**窗口（Ctrl+Shift+M，`/agents`）按 agent → 会话 → 标签页 → 每一步浏览，带操作后截图和当时依据的快照；agent 打开的标签页直接显示它的名字。详见 [docs/provenance.md](docs/provenance.md)。
+- **能指导改进的数据面板。** **数据面板**（Ctrl+Shift+D，`/insights`，`waymark stats`）统计 Waymark 替 agent 做了什么（ddddocr 识别、拟人鼠标轨迹与键入、空闲游走、遇到的验证），对比各 agent 的效率，估算浏览器往返 token 和 Waymark 帮省下的 token（估算值都会标明并给出公式），并给出改进建议：重复快照、可以做成脚本的重复网址和步骤序列、失败集中的站点、慢站点等。
 - **每一步可追溯。** 打开、点击、填写、读取都会写入本地账本：会话、操作前后网址、耗时、用的是哪个能力实现，以及当时依据的页面快照的 SHA-256。在侧栏或 `/audit` 页面点任意一步，能看到 AI 当时操作的是哪个元素。
 - **默认输入隔离。** AI 的鼠标键盘事件只发给目标标签，剪贴板走会话内虚拟剪贴板，不影响你同时用电脑。
 - **放心的空闲行为。** AI 思考时，指针像一个正在拿主意的人：读一读、停一停、滚一滚，偶尔点开别的页面看一眼。AI 下一步之前全部复原，页面和它离开时一模一样。结账、登录、支付、申请类页面，有未保存内容的表单，以及你自己设的保护站点，空闲行为一律不离开。
@@ -116,7 +118,12 @@ waymark click 2 e1
 waymark read 2 --limit 2000
 waymark audit
 waymark pause / waymark resume
+waymark --agent codex screenshot 2 -o page.png
+waymark sessions --of codex     # 每个 agent 按会话看它做了什么
+waymark stats                   # 自动化统计、token 估算、改进建议
 ```
+
+所有命令都支持 `--json`，并记录是谁执行的（`--agent`，或从 agent 的环境变量自动识别；在终端里手动执行记为 `human`）。
 
 全部命令见 [`cli/README.md`](cli/README.md)。
 

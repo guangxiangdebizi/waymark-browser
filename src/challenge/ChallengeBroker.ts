@@ -43,6 +43,17 @@ export class ChallengeBroker {
     return this.requireAi(job, 'Challenge type requires AI recovery');
   }
 
+  /** Get the local OCR model ready ahead of need (background, never blocks the caller). */
+  prepare(reason: 'agent' | 'startup' = 'agent'): void {
+    const policy = this.config.challenge.ocrPrewarm ?? 'agent';
+    if (policy === false || policy === 'off') return;
+    if (reason === 'startup' && policy !== 'startup' && policy !== true) return;
+    try {
+      const provider = this.capabilities.get(this.config.capabilities.challengeOcr) as unknown as { warm?: () => Promise<void> };
+      void provider.warm?.();
+    } catch { /* a missing provider is reported when it is used */ }
+  }
+
   list(): ChallengeJob[] { return [...this.jobs.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt)); }
   get(id: string): ChallengeJob { const job = this.jobs.get(id); if (!job) throw new Error(`Unknown challenge job: ${id}`); return job; }
 

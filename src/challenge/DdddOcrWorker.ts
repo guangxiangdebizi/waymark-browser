@@ -1,8 +1,11 @@
-﻿import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { fromRoot } from '../config.js';
 import type { CapabilityManifest } from '../capabilities/CapabilityRegistry.js';
+
+/** A 1×1 PNG: running the model once makes the first real CAPTCHA as fast as the next. */
+const WARM_IMAGE = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
 
 export interface OcrResult { text: string; probability?: number[] }
 interface Pending { resolve: (value: OcrResult) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }
@@ -14,10 +17,45 @@ export class DdddOcrWorker {
   private stdout = '';
   private stderr = '';
 
-  constructor(private options: { pythonCommand: string; pythonFallback: string; timeoutMs: number; maxImageBytes: number }) {}
+  private warming?: Promise<void>;
+  private idleTimer?: NodeJS.Timeout;
+  /** How long the loaded model stays resident without agent activity (0 keeps it for the app's lifetime). */
+  private idleUnloadMs: number;
+
+  constructor(private options: { pythonCommand: string; pythonFallback: string; timeoutMs: number; maxImageBytes: number; ocrIdleUnloadMinutes?: number }) {
+    this.idleUnloadMs = Math.max(0, options.ocrIdleUnloadMinutes ?? 20) * 60000;
+  }
+
+  /**
+   * Make sure the model is loaded before it is needed: Waymark calls this shortly after startup and on every agent
+   * call, so a CAPTCHA never waits for Python and the model to start. Cheap when already warm.
+   */
+  warm(): Promise<void> {
+    this.armIdle();
+    if (this.child && !this.warming) return Promise.resolve();
+    this.warming ??= this.send({ warm: true, image: WARM_IMAGE }, Math.max(this.options.timeoutMs, 60000))
+      .then(() => undefined, () => undefined)
+      .finally(() => { this.warming = undefined; });
+    return this.warming;
+  }
+
+  isLoaded(): boolean { return Boolean(this.child); }
+
+  /** With no agent activity for idleUnloadMs the worker exits and its memory returns to the system; warm() restarts it. */
+  private armIdle(): void {
+    if (this.idleTimer) clearTimeout(this.idleTimer);
+    if (!this.idleUnloadMs) return;
+    this.idleTimer = setTimeout(() => { if (!this.pending.size) this.stopWorker(); }, this.idleUnloadMs);
+    this.idleTimer.unref?.();
+  }
 
   async invoke(image: Buffer): Promise<OcrResult> {
     if (image.byteLength > this.options.maxImageBytes) throw new Error('Challenge image exceeds configured byte limit');
+    this.armIdle();
+    return await this.send({ image: image.toString('base64') }, this.options.timeoutMs);
+  }
+
+  private send(payload: Record<string, unknown>, timeoutMs: number): Promise<OcrResult> {
     const child = this.ensureWorker();
     const id = randomUUID();
     return new Promise<OcrResult>((resolvePromise, reject) => {
@@ -25,15 +63,15 @@ export class DdddOcrWorker {
         const error = new Error('OCR worker timed out');
         this.rejectAll(error);
         this.stopWorker();
-      }, this.options.timeoutMs);
+      }, timeoutMs);
       this.pending.set(id, { resolve: resolvePromise, reject, timer });
-      child.stdin.write(JSON.stringify({ id, image: image.toString('base64') }) + '\n', error => {
+      child.stdin.write(JSON.stringify({ id, ...payload }) + '\n', error => {
         if (error) this.fail(id, error);
       });
     });
   }
 
-  async close(): Promise<void> { this.stopWorker(); }
+  async close(): Promise<void> { if (this.idleTimer) clearTimeout(this.idleTimer); this.stopWorker(); }
 
   private ensureWorker(): ChildProcessWithoutNullStreams {
     if (this.child) return this.child;

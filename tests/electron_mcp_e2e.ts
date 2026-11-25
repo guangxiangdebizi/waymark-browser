@@ -5,12 +5,13 @@ import { resolve } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
+const BASE = process.env.WAYMARK_URL ?? 'http://127.0.0.1:9510';
 const fixture = createServer((_req, res) => { res.setHeader('content-type', 'text/html; charset=utf-8'); res.end(readFileSync(resolve('tests/fixtures/basic.html'))); });
 await new Promise<void>(r => fixture.listen(0, '127.0.0.1', r));
 const address = fixture.address();
 if (!address || typeof address === 'string') throw new Error('fixture port unavailable');
 const client = new Client({ name: 'electron-acceptance', version: '1.0.0' });
-await client.connect(new StreamableHTTPClientTransport(new URL('http://127.0.0.1:9510/mcp')));
+await client.connect(new StreamableHTTPClientTransport(new URL(`${BASE}/mcp`)));
 const unwrap = (result: any) => {
   const text = result.content[0].text as string;
   return JSON.parse(text.slice(text.indexOf('\n') + 1, text.lastIndexOf('\n[END_UNTRUSTED_PAGE_CONTENT')));
@@ -24,27 +25,27 @@ try {
   const homeText = unwrap(await client.callTool({ name: 'read', arguments: { page: homeTab.id } })).text;
   assert.ok(homeText.includes('Waymark') && homeText.includes('/mcp'), homeText.slice(0, 1200));
   assert.equal(homeText.includes('???'), false);
-  const audited = unwrap(await client.callTool({ name: 'navigate', arguments: { action: 'url', page: homeTab.id, url: 'http://127.0.0.1:9510/audit' } }));
+  const audited = unwrap(await client.callTool({ name: 'navigate', arguments: { action: 'url', page: homeTab.id, url: `${BASE}/audit` } }));
   assert.equal(audited.challenge, null, 'local cockpit pages must not be detected as CAPTCHA challenges');
-  await client.callTool({ name: 'navigate', arguments: { action: 'url', page: homeTab.id, url: 'http://127.0.0.1:9510/home' } });
-  const auditHtml = await fetch('http://127.0.0.1:9510/audit').then(r => r.text());
+  await client.callTool({ name: 'navigate', arguments: { action: 'url', page: homeTab.id, url: `${BASE}/home` } });
+  const auditHtml = await fetch(`${BASE}/audit`).then(r => r.text());
   assert.ok(auditHtml.includes('\u9694\u79bb\uff08\u9ed8\u8ba4\uff09'));
-  const refused = await fetch('http://127.0.0.1:9510/api/control', { method: 'POST', headers: { 'content-type': 'application/json', origin: 'http://evil.test' }, body: JSON.stringify({ paused: true }) });
+  const refused = await fetch(`${BASE}/api/control`, { method: 'POST', headers: { 'content-type': 'application/json', origin: 'http://evil.test' }, body: JSON.stringify({ paused: true }) });
   assert.equal(refused.status, 403, 'cross-origin cockpit write must be refused');
-  const plain = await fetch('http://127.0.0.1:9510/api/control', { method: 'POST', body: 'paused=true' });
+  const plain = await fetch(`${BASE}/api/control`, { method: 'POST', body: 'paused=true' });
   assert.equal(plain.status, 415, 'non-JSON cockpit write must be refused');
-  const settingsResponse = await fetch('http://127.0.0.1:9510/api/settings').then(r => r.json());
+  const settingsResponse = await fetch(`${BASE}/api/settings`).then(r => r.json());
   assert.equal(settingsResponse.ambientMouse.enabled, true);
   assert.equal(settingsResponse.slots.pacing.active, 'action.pacing.human');
   assert.equal(settingsResponse.slots.idle.active, 'idle.adaptive');
   const created = unwrap(await client.callTool({ name: 'tabs', arguments: { action: 'new', url: `http://127.0.0.1:${address.port}` } }));
-  const control = (paused: boolean) => fetch('http://127.0.0.1:9510/api/control', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ paused }) }).then(r => r.json());
+  const control = (paused: boolean) => fetch(`${BASE}/api/control`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ paused }) }).then(r => r.json());
   assert.equal((await control(true)).paused, true);
   try {
     const blocked = await client.callTool({ name: 'snapshot', arguments: { page: created.id } }) as any;
     assert.equal(blocked.isError, true, 'automation must be refused while the user holds control');
     assert.match(blocked.content[0].text, /paused/);
-    const status = await fetch('http://127.0.0.1:9510/api/status').then(r => r.json());
+    const status = await fetch(`${BASE}/api/status`).then(r => r.json());
     assert.equal(status.paused, true);
   } finally { await control(false); }
   const snapshot = unwrap(await client.callTool({ name: 'snapshot', arguments: { page: created.id } }));

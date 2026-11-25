@@ -7,7 +7,7 @@ import sys
 from datetime import datetime
 from typing import Any
 
-from . import __version__, app, bridge
+from . import __version__, app, bridge, identity
 from .client import Client, WaymarkError
 
 
@@ -76,6 +76,88 @@ def show_audit(events: list) -> str:
     return "\n".join(rows) or "No events."
 
 
+def fmt_duration(ms: float) -> str:
+    seconds = (ms or 0) / 1000
+    if seconds < 60:
+        return f"{seconds:.0f}s"
+    if seconds < 3600:
+        return f"{seconds / 60:.0f}m"
+    return f"{seconds / 3600:.1f}h"
+
+
+def show_agents(tree: dict) -> str:
+    if not tree.get("agents"):
+        return "No agent activity in this period."
+    lines = []
+    for agent in tree["agents"]:
+        ids = ", ".join(f"{k}:{v}" for k, v in agent.get("identity", {}).items())
+        lines.append(f"{agent['label']:<16} sessions {len(agent['sessions']):>3}  actions {agent['actions']:>5}  failed {agent['failures']:>4}  last {fmt_time(agent['lastSeen'])}  [{ids}]")
+    return "\n".join(lines)
+
+
+def show_sessions(tree: dict, agent: str | None = None) -> str:
+    rows = []
+    for item in tree.get("agents", []):
+        if agent and item["agent"] != agent:
+            continue
+        for session in item["sessions"]:
+            rows.append(session)
+    rows.sort(key=lambda s: s["end"], reverse=True)
+    if not rows:
+        return "No sessions."
+    out = []
+    for s in rows:
+        flag = " (inferred)" if s.get("inferred") else ""
+        out.append(f"{fmt_time(s['end'])}  {s['agentLabel']:<12} {s['label'][:40]:<40}{flag}\n"
+                   f"    key {s['key']}  {s['actions']} actions, {s['failures']} failed, {len(s['tabs'])} tabs, {fmt_duration(s['durationMs'])}"
+                   + (f"  window {s['window']}" if s.get("window") else "") + (f"\n    {' · '.join(s['hosts'][:6])}" if s.get("hosts") else ""))
+    return "\n".join(out)
+
+
+def show_session(detail: dict) -> str:
+    s = detail["session"]
+    lines = [f"{s['agentLabel']} · {s['label']}  ({s['identity']}{', inferred' if s.get('inferred') else ''})",
+             f"{fmt_time(s['start'])} -> {fmt_time(s['end'])}  {s['actions']} actions, {s['failures']} failed, ~{s['tokensEstimated']} tokens (estimate)"]
+    for tab in detail.get("tabs", []):
+        opened = "opened here" if tab.get("openedHere") else (f"opened by {tab['openedBy']}" if tab.get("openedBy") else "existing tab")
+        lines.append(f"  tab {tab['pageId']:>3}  {opened:<20} {(tab.get('lastUrl') or '')[:80]}")
+    lines.append("")
+    lines.append(show_audit(list(reversed(detail.get("timeline", [])))))
+    return "\n".join(lines)
+
+
+METRIC_LABELS = {
+    "calls": "AI steps (tool calls)", "actions": "Browser actions", "successRate": "Action success %", "sessions": "Sessions", "agents": "Agents",
+    "ocrRuns": "ddddocr runs", "ocrSolved": "ddddocr solved", "challengesDetected": "CAPTCHAs / bot walls", "humanHandoffs": "Handed to a person",
+    "pointerPaths": "Human pointer paths", "humanKeystrokes": "Human-typed characters", "idleMoves": "Idle behaviour steps", "pacingSeconds": "Pacing wait (s)",
+    "tokensBrowserIo": "Browser I/O tokens", "tokensReported": "Tokens reported by agents", "tokensSavedCaptcha": "Tokens saved: CAPTCHAs",
+    "tokensSavedDiffs": "Tokens saved: diffs", "tokensSavedVsScreenshots": "Tokens saved: text vs screenshots", "tokensSavedTruncation": "Tokens not sent: read limit",
+    "tokensWastedRedundantSnapshots": "Tokens wasted: repeat snapshots", "thinkSeconds": "Agent thinking (s)", "browserSeconds": "Browser execution (s)",
+}
+
+
+def show_stats(report: dict, suggestions_only: bool = False) -> str:
+    lines = []
+    if not suggestions_only:
+        lines.append(f"Waymark insights, last {report['range']['days']} days" + (f" · agent {report['filter']['agent']}" if report.get("filter", {}).get("agent") else ""))
+        for metric in report["metrics"]:
+            if metric["id"] in METRIC_LABELS:
+                est = "  (estimate)" if metric.get("estimate") else ""
+                lines.append(f"  {METRIC_LABELS[metric['id']]:<34} {metric['value']:>10}{est}")
+        if report.get("agents"):
+            lines.append("")
+            lines.append("  Agent            sessions  actions  success  steps/session  tokens/session(est)")
+            for a in report["agents"]:
+                lines.append(f"  {a['label']:<16} {a['sessions']:>8} {a['actions']:>8} {a['successRate']:>7}% {a['avgStepsPerSession']:>14} {a['tokensPerSession']:>20}")
+        lines.append("")
+    recs = report.get("recommendations", [])
+    lines.append("Suggestions:" if recs else "Suggestions: none")
+    for rec in recs:
+        params = ", ".join(f"{k}={v}" for k, v in rec.get("params", {}).items())
+        lines.append(f"  [{rec['severity']}] {rec['id']}  {params}")
+    return "\n".join(lines)
+
+
 def parse_fields(values: list[str]) -> list[dict]:
     if len(values) % 2:
         raise SystemExit("fill expects REF VALUE pairs, e.g. waymark fill 3 e4 hello e5 world")
@@ -86,12 +168,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="waymark", description="Drive Waymark, the open-source browser for AI agents, from the terminal.")
     parser.add_argument("--url", help="Waymark base URL (default $WAYMARK_URL or http://127.0.0.1:9510)")
     parser.add_argument("--json", action="store_true", help="print raw JSON")
+    parser.add_argument("--agent", help="who is driving (default $WAYMARK_AGENT, else detected from the agent's environment, else 'human' in a terminal)")
+    parser.add_argument("--session", help="session id to group commands under (default $WAYMARK_SESSION or the agent's own session id)")
+    parser.add_argument("--window", help="label for your window or worker, e.g. 'codex #2' (default $WAYMARK_WINDOW)")
     parser.add_argument("--version", action="version", version=f"waymark-browser {__version__}")
     sub = parser.add_subparsers(dest="command", metavar="COMMAND")
     # Accept --json/--url after the subcommand too (`waymark audit --json`); SUPPRESS keeps the global value otherwise.
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help="print raw JSON")
     common.add_argument("--url", default=argparse.SUPPRESS, help="Waymark base URL")
+    common.add_argument("--agent", default=argparse.SUPPRESS, help="who is driving: claude-code, codex, workbuddy, human... (default $WAYMARK_AGENT or auto-detected)")
+    common.add_argument("--session", default=argparse.SUPPRESS, help="your session id, kept across commands (default $WAYMARK_SESSION or the agent's own)")
+    common.add_argument("--window", default=argparse.SUPPRESS, help="label of your window or worker (default $WAYMARK_WINDOW)")
     original_add_parser = sub.add_parser
     sub.add_parser = lambda *a, **k: original_add_parser(*a, parents=[common], **k)  # type: ignore[method-assign]
 
@@ -166,11 +254,49 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--limit", type=int, default=30)
     p.add_argument("--failures", action="store_true")
     p.add_argument("--ambient", action="store_true", help="include ambient mouse moves")
+    p.add_argument("--of", dest="of_agent", metavar="AGENT", help="only this agent's entries")
     p = sub.add_parser("trace", help="show one ledger event with its snapshot basis")
     p.add_argument("id")
     p = sub.add_parser("challenge", help="list or advance CAPTCHA challenge jobs")
     p.add_argument("action", nargs="?", default="list", choices=["list", "status", "ai_failed", "ai_resolved", "human_start", "cancel"])
     p.add_argument("id", nargs="?")
+    p = sub.add_parser("activate", help="bring a tab to the front")
+    p.add_argument("page", type=int)
+    p = sub.add_parser("screenshot", help="save a screenshot of a tab (PNG)")
+    p.add_argument("page", type=int)
+    p.add_argument("-o", "--output", help="write the image here (default: keep it in Waymark's trace folder and print the path)")
+    p.add_argument("--full", action="store_true", help="the whole page, not just the viewport")
+    p.add_argument("--jpeg", action="store_true")
+    sub.add_parser("whoami", help="show how Waymark identifies this CLI (agent, source, session)")
+    p = sub.add_parser("name", help="name your session in the trace (optionally declare the agent)")
+    p.add_argument("label")
+    p.add_argument("--summary")
+    p = sub.add_parser("agents", help="agents that used Waymark, with their sessions")
+    p.add_argument("--days", type=int, default=30)
+    p = sub.add_parser("sessions", help="agent sessions, newest first")
+    p.add_argument("--days", type=int, default=30)
+    p.add_argument("--of", dest="of_agent", metavar="AGENT", help="only this agent")
+    p.add_argument("-q", "--query", help="search URLs, titles, errors")
+    p = sub.add_parser("session", help="one session: its tabs and every step")
+    p.add_argument("key", help="session key from `waymark sessions`")
+    p.add_argument("--idle", action="store_true", help="include idle behaviour on its tabs")
+    p = sub.add_parser("stats", help="statistics: work per agent, automation counts, token estimates, suggestions")
+    p.add_argument("--days", type=int, default=7)
+    p.add_argument("--of", dest="of_agent", metavar="AGENT", help="only this agent")
+    p = sub.add_parser("insights", help="only the improvement suggestions")
+    p.add_argument("--days", type=int, default=30)
+    p = sub.add_parser("usage", help="report model tokens your session spent (shown next to the estimates)")
+    p.add_argument("--input", type=int, default=0, help="input tokens")
+    p.add_argument("--output", type=int, default=0, help="output tokens")
+    p.add_argument("--cost", type=float, help="cost in USD")
+    p.add_argument("--model")
+    p.add_argument("--task")
+    for name, kind in (("manager", "agents"), ("dashboard", "insights")):
+        p = sub.add_parser(name, help=f"open the {'agent manager' if kind == 'agents' else 'insights dashboard'} window")
+        p.set_defaults(window_kind=kind)
+    p = sub.add_parser("prune", help="delete trace entries older than N days (dry run unless --yes)")
+    p.add_argument("--days", type=int, required=True)
+    p.add_argument("--yes", action="store_true", help="really delete")
     sub.add_parser("tools", help="list MCP tools exposed by the app")
     p = sub.add_parser("call", help="call any MCP tool with JSON arguments")
     p.add_argument("tool")
@@ -192,10 +318,16 @@ def run(args: argparse.Namespace) -> int:
     if command == "doctor":
         return app.doctor(args.app_dir, args.url)
 
-    client = Client(args.url)
+    who = identity.detect(getattr(args, "agent", None), getattr(args, "session", None), getattr(args, "window", None))
     if command == "mcp":
+        # The bridge speaks for the MCP client that spawned it: its clientInfo identifies it, unless --agent says otherwise.
+        explicit = identity.detect(getattr(args, "agent", None), getattr(args, "session", None), getattr(args, "window", None), env={}, interactive=False)
+        headers = explicit.headers() if explicit.agent or explicit.session or explicit.window else {}
+        headers.pop("X-Waymark-Client", None)
+        client = Client(args.url, headers=headers, stateless=False)
         on_down = (lambda: app.start(None, None, False, 120, args.url) == 0) if args.autostart else None
         return bridge.serve(client, on_down=on_down)
+    client = Client(args.url, headers=who.headers())
     if command == "status":
         status = client.api("status")
         emit(status if as_json else show_status(status), as_json)
@@ -247,6 +379,8 @@ def run(args: argparse.Namespace) -> int:
         return 0 if result.get("matched") else 1
     elif command == "audit":
         query = f"audit/events?limit={args.limit}&ambient={1 if args.ambient else 0}" + ("&status=failure" if args.failures else "")
+        if args.of_agent:
+            query += f"&agent={args.of_agent}"
         events = client.api(query)
         emit(events if as_json else show_audit(events), as_json)
     elif command == "trace":
@@ -256,6 +390,72 @@ def run(args: argparse.Namespace) -> int:
         if args.id:
             arguments["id"] = args.id
         emit(client.call("challenge", arguments), True)
+    elif command == "activate":
+        emit(client.call("tabs", {"action": "active", "page": args.page}), True)
+    elif command == "screenshot":
+        inline = bool(args.output)
+        shot = client.call("screenshot", {"page": args.page, "fullPage": args.full, "format": "jpeg" if args.jpeg else "png", "inline": inline})
+        if args.output:
+            import base64
+            with open(args.output, "wb") as handle:
+                handle.write(base64.b64decode(shot.pop("base64")))
+            shot["savedTo"] = args.output
+        emit(shot if as_json else f"Saved {shot.get('savedTo') or shot.get('path')} ({shot.get('bytes')} bytes)", as_json)
+    elif command == "whoami":
+        server_view = client.call("whoami")
+        local = {"agent": who.agent, "source": who.source, "session": who.session, "window": who.window}
+        result = {"waymark": server_view, "cli": local}
+        emit(result if as_json else f"agent    {server_view.get('label')} ({server_view.get('agent')}, identified by {server_view.get('identifiedBy')})\n"
+             f"session  {server_view.get('session') or '-'}{' / ' + server_view['sessionLabel'] if server_view.get('sessionLabel') else ''}\n"
+             f"window   {server_view.get('window') or '-'}" + (f"\nhint     {server_view['hint']}" if server_view.get("hint") else ""), as_json)
+    elif command == "name":
+        arguments = {"name": args.label}
+        if args.summary:
+            arguments["summary"] = args.summary
+        emit(client.call("name_session", arguments), True)
+    elif command in ("agents", "sessions"):
+        query = f"agents?days={args.days}"
+        if command == "sessions" and args.query:
+            from urllib.parse import quote
+            query += "&q=" + quote(args.query)
+        tree = client.api(query)
+        if as_json:
+            emit(tree if command == "agents" else [s for a in tree["agents"] if not args.of_agent or a["agent"] == args.of_agent for s in a["sessions"]], True)
+        else:
+            emit(show_agents(tree) if command == "agents" else show_sessions(tree, args.of_agent), False)
+    elif command == "session":
+        from urllib.parse import quote
+        detail = client.api(f"sessions/{quote(args.key, safe='')}" + ("?idle=1" if args.idle else ""))
+        emit(detail if as_json else show_session(detail), as_json)
+    elif command in ("stats", "insights"):
+        query = f"insights?days={args.days}"
+        if command == "stats" and args.of_agent:
+            query += f"&agent={args.of_agent}"
+        report = client.api(query)
+        if as_json:
+            emit(report if command == "stats" else report["recommendations"], True)
+        else:
+            emit(show_stats(report, suggestions_only=command == "insights"), False)
+    elif command == "usage":
+        arguments = {"inputTokens": args.input, "outputTokens": args.output}
+        for key, value in (("costUsd", args.cost), ("model", args.model), ("task", args.task)):
+            if value is not None:
+                arguments[key] = value
+        emit(client.call("report_usage", arguments), True)
+    elif command in ("manager", "dashboard"):
+        result = client.api("windows", {"kind": args.window_kind})
+        if not result.get("opened"):
+            import webbrowser
+            webbrowser.open(result["url"])
+        emit(result if as_json else f"Opened {result['url']}", as_json)
+    elif command == "prune":
+        result = client.api("audit/prune", {"days": args.days, "dryRun": not args.yes})
+        if as_json:
+            emit(result, True)
+        else:
+            verb = "Would remove" if result["dryRun"] else "Removed"
+            emit(f"{verb} {result['removed']} entries older than {result['cutoff'][:10]}, {result['snapshotsRemoved']} snapshots and {result['screenshotsRemoved']} screenshots; {result['kept']} entries kept."
+                 + ("\nRun again with --yes to delete." if result["dryRun"] else ""), False)
     elif command == "tools":
         tools = client.tools()
         emit(tools if as_json else "\n".join(f"{tool['name']:<14} {tool.get('description', '')}" for tool in tools), as_json)

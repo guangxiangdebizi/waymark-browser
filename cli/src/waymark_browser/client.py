@@ -69,11 +69,17 @@ def unwrap(result: dict) -> Any:
 
 
 class Client:
-    def __init__(self, url: str | None = None, timeout: float = 120.0):
+    def __init__(self, url: str | None = None, timeout: float = 120.0, headers: dict | None = None, stateless: bool = True):
         self.url = base_url(url)
         self.timeout = timeout
         self._initialized = False
         self._next_id = 1
+        # Identity headers (see identity.py) go on every request, so the ledger knows which agent ran each command.
+        self.headers = dict(headers or {})
+        # One CLI command is one short exchange: ask the app not to open an MCP session for it. The stdio bridge
+        # instead keeps the session the app hands out, so the real client's clientInfo identifies its calls.
+        self.stateless = stateless
+        self.session_id: str | None = None
 
     # ----- transport -----
     def _request(self, method: str, path: str, body: Any = None, headers: dict | None = None) -> tuple[int, str, str]:
@@ -81,10 +87,13 @@ class Client:
         request = urllib.request.Request(self.url + path, data=data, method=method)
         if body is not None:
             request.add_header("Content-Type", "application/json")
-        for key, value in (headers or {}).items():
+        for key, value in {**self.headers, **(headers or {})}.items():
             request.add_header(key, value)
         try:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                session = response.headers.get("Mcp-Session-Id")
+                if session and not self.stateless:
+                    self.session_id = session
                 return response.status, response.headers.get("Content-Type", ""), response.read().decode("utf-8")
         except urllib.error.HTTPError as error:
             text = error.read().decode("utf-8", "replace")
@@ -98,10 +107,12 @@ class Client:
 
     def post_rpc(self, message: dict) -> list[dict]:
         """Send one JSON-RPC message to /mcp and return the messages in the response."""
-        status, content_type, body = self._request("POST", "/mcp", message, {
-            "Accept": "application/json, text/event-stream",
-            "MCP-Protocol-Version": PROTOCOL_VERSION,
-        })
+        headers = {"Accept": "application/json, text/event-stream", "MCP-Protocol-Version": PROTOCOL_VERSION}
+        if self.stateless:
+            headers["X-Waymark-Stateless"] = "1"
+        elif self.session_id:
+            headers["Mcp-Session-Id"] = self.session_id
+        status, content_type, body = self._request("POST", "/mcp", message, headers)
         return [] if status == 202 else parse_messages(body, content_type)
 
     def rpc(self, method: str, params: dict | None = None) -> Any:

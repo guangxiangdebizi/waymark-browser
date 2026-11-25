@@ -29,7 +29,7 @@
         : `<span class="globe">${icon('globe')}</span>`;
       return `<div class="tab${tab.active ? ' active' : ''}${width < 96 ? ' narrow' : ''}" role="tab" draggable="true" data-id="${tab.id}" title="${esc(tab.title)}
 ${esc(tab.url)}" style="flex-basis:${width}px">
-        <span class="fav">${fav}</span><span class="title">${esc(tab.title)}</span>${tab.owner === 'agent' ? '<span class="badge">AI</span>' : ''}
+        <span class="fav">${fav}</span><span class="title">${esc(tab.title)}</span>${tab.owner === 'agent' ? `<span class="badge" title="${th("此标签页由 AI 打开")}">${esc(tab.agent || 'AI')}</span>` : ''}
         <button class="x" data-close="${tab.id}" title="${th("关闭标签页 (Ctrl+W)")}">${icon('close')}</button></div>`;
     }).join('');
     box.querySelectorAll('.fav img').forEach(img => img.addEventListener('error', () => { img.replaceWith(Object.assign(document.createElement('span'), { className: 'globe', innerHTML: icon('globe') })); }, { once: true }));
@@ -42,6 +42,7 @@ ${esc(tab.url)}" style="flex-basis:${width}px">
     $('#reload').classList.toggle('loading', Boolean(tab?.loading));
     $('#reload').title = tab?.loading ? t("停止加载") : t("重新加载 (Ctrl+R)");
     $('#agent-tag').hidden = tab?.owner !== 'agent';
+    $('#agent-tag').textContent = tab?.agent ? tab.agent : t("AI 标签页");
     $('#zoom-tag').hidden = !tab || tab.zoom === 100;
     $('#zoom-tag').textContent = (tab?.zoom ?? 100) + '%';
     if (!state.editing) {
@@ -131,6 +132,8 @@ ${esc(tab.url)}" style="flex-basis:${width}px">
     if (open) refreshPanel();
   }
   $('#panel-toggle').addEventListener('click', async () => shell.setPanel(!(await shell.getPanel())));
+  $('#open-agents').addEventListener('click', () => shell.openWindow('agents'));
+  $('#open-insights').addEventListener('click', () => shell.openWindow('insights'));
   shell.onPanel(applyPanel);
 
   function setView(view) {
@@ -211,7 +214,10 @@ ${esc(tab.url)}" style="flex-basis:${width}px">
     const card = $('#control-card');
     card.classList.toggle('paused', Boolean(status.paused));
     $('#control-title').textContent = status.paused ? t("AI 已暂停，浏览器由你控制") : status.busy ? t("AI 正在操作浏览器") : t("AI 可以操作浏览器");
-    $('#control-sub').textContent = t("会话 {0} · {1} 个标签页 · 今日 {2} 次动作", [status.session, status.tabs, status.todayActions]);
+    // Several agents can work at once: name the ones active in the last minutes instead of a single global session.
+    const agents = (status.activeAgents || []).map(agent => agent.label).join(', ');
+    const who = status.session && status.session !== 'default' ? status.session : agents || status.session;
+    $('#control-sub').textContent = t("会话 {0} · {1} 个标签页 · 今日 {2} 次动作", [who, status.tabs, status.todayActions]);
     const pause = $('#pause-btn');
     pause.textContent = status.paused ? t("恢复 AI") : t("暂停 AI");
     pause.className = status.paused ? 'btn primary' : 'btn';
@@ -393,9 +399,17 @@ ${esc(tab.url)}" style="flex-basis:${width}px">
   });
 
   /* ---------------- loop ---------------- */
-  function refreshPanel() {
+  function refreshPanel(force) {
     if (document.body.classList.contains('panel-closed')) return;
-    if (state.view === 'activity') loadEvents();
+    if (state.view === 'activity') {
+      // Re-read the timeline only when the ledger moved (idle behaviour counts only when it is shown).
+      const seq = state.showAmbient ? state.status?.sequence : state.status?.agentSequence;
+      if (force === true || seq === undefined || seq !== state.timelineSeq || state.timelineAmbient !== state.showAmbient) {
+        state.timelineSeq = seq;
+        state.timelineAmbient = state.showAmbient;
+        loadEvents();
+      } else renderTimeline(false);
+    }
     if (state.view === 'challenges') renderChallenges();
   }
 
