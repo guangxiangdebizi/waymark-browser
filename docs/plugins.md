@@ -100,6 +100,26 @@ Answers longer than 128 characters are rejected. If the solver fails, the challe
     "challengeOcr": "challenge.ocr.ddddocr-beta" } }
 ```
 
+### Sliders, ordered clicks and animated images
+
+These challenges need more than one still image in and one string out. Waymark takes the frames (before and while
+holding a slider handle, or over a few seconds for a prompt that plays), and asks the provider through
+`vision(op, payload)`; it does the pointer work itself. The built-in ddddocr worker implements all four operations. A
+JS module provider that implements `vision` takes them over; a provider without it reads text only, and these
+challenges go to the AI step. Images are base64 PNGs, coordinates are image pixels.
+
+| `op` | Input | Output |
+|---|---|---|
+| `classify_frames` | `frames`: one image over time (characters blinking in one by one) | `text` read from all frames merged into one |
+| `reveal` | `before`, `frames`: the slider image before and while the handle is held | `regions`: what the press revealed (piece, gap) as `{x, y, w, h, area}` |
+| `slide_match` | `piece`, `background` | `target`: where the piece fits |
+| `click_plan` | `frames`, `times`, `canvas` and `prompt` regions, optional `tokens` (targets the page spells out) and `exclude` (the instruction text) | `points` to click, in order |
+
+`click_plan` in the built-in worker: a prompt that plays is split into its items in order, starting after the longest
+pause, so sampling that began mid-cycle still gets the order right; a still prompt is split by the detector. Each
+item is matched to a detected character by its text first, then searched for by shape at several sizes and slight
+rotations, then by the closest detected shape.
+
 ## Keyboard provider
 
 A `keyboard` provider enters text at the caret of the focused control. `fill`, `type` and the text part of every form action go through it. Export an object with a `manifest` (kind `action`) and `type(page, text)`, plus `invoke({ page, text })` calling the same thing. It appears in the keyboard slot automatically.

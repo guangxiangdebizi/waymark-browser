@@ -11,6 +11,8 @@ export interface PointerActor {
   move(input: PointerInput, purpose?: 'click' | 'hover' | 'ambient'): Promise<void>;
   /** Where this actor last left the pointer on a page. */
   position?(page: Page): { x: number; y: number } | undefined;
+  /** Something else moved the pointer (a drag); the next path starts from here. */
+  place?(page: Page, point: { x: number; y: number }): void;
   close?(): Promise<void>;
 }
 
@@ -19,6 +21,7 @@ export class InputActor implements PointerActor {
   private positions = new WeakMap<Page, { x: number; y: number }>();
   constructor(private options: { minSteps: number; maxSteps: number; minDelayMs: number; maxDelayMs: number }) {}
   position(page: Page): { x: number; y: number } | undefined { return this.positions.get(page); }
+  place(page: Page, point: { x: number; y: number }): void { this.positions.set(page, point); }
   async invoke(input: PointerInput): Promise<void> {
     await this.move(input);
     if (input.signal?.aborted) return;

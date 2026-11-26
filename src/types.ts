@@ -58,6 +58,10 @@ export interface AppConfig {
     maxOcrAttempts: number;
     maxAiAttempts: number;
     autoSubmit: boolean;
+    /** How long an animated challenge (a prompt that plays its items, blinking text) is sampled; default 4000 ms. */
+    sampleMs?: number;
+    /** Time between sampled frames; default 100 ms. */
+    frameIntervalMs?: number;
   };
 }
 
@@ -81,7 +85,7 @@ export interface ChallengeJob {
   id: string;
   pageId: number;
   origin: string;
-  kind: 'text_image' | 'interactive' | 'unknown';
+  kind: 'text_image' | 'slider' | 'click_sequence' | 'interactive' | 'unknown';
   status: ChallengeStatus;
   createdAt: string;
   updatedAt: string;

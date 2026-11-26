@@ -58,7 +58,7 @@ interface CapabilityProvider<I, O> {
 - `action.pointer.bezier`：可配置轨迹与节奏。
 - `action.clipboard.virtual`：默认会话内虚拟剪贴板，不访问系统剪贴板。
 - `action.clipboard.system`：显式启用的系统全局剪贴板，用于跨应用任务。
-- `challenge.ocr.ddddocr`：常驻独立 Python 进程，本地识别，固定输入大小和超时；模型懒加载并复用，避免每次请求重复冷启动。
+- `challenge.ocr.ddddocr`：常驻独立 Python 进程，本地识别，固定输入大小和超时；模型懒加载并复用，避免每次请求重复冷启动。除了读一张图（`classification`），还提供 `vision(op)`：`classify_frames`（多帧合成一帧再读）、`reveal`（按下前后差分出拼图块和缺口）、`slide_match`（独立拼图块图片的经典滑块）、`click_plan`（按顺序点选：提示可以是 DOM 文字、静态图或轮播，`detection` 找候选、逐个识别，检测漏掉的用图形搜索补）。OpenCV 和检测模型在发现滑块/点选时才加载，指针移向组件的同时在后台就绪。
 
 ### 能力插槽与插件（已实现）
 
@@ -66,7 +66,7 @@ interface CapabilityProvider<I, O> {
 
 - 插件来源：`capabilities.plugins` 中的 JS 模块（导出轨迹模型、完整 CapabilityProvider、数组或工厂函数），或 `command` 外部进程（stdin/stdout 每行一条 JSON，按 `id` 匹配，带超时）。
 - 轨迹模型只输出带时间间隔的点列，统一执行器负责实际 CDP 输入；模型拿不到页面、Cookie 或文件系统。点数、坐标和间隔都经过校验，模型出错时退回内置贝塞尔轨迹，动作照常完成。
-- OCR 插件与 ddddocr worker 同一契约：输入裁剪后的挑战图片，输出文本；答案只用于本地填写。
+- OCR 插件与 ddddocr worker 同一契约：输入裁剪后的挑战图片，输出文本；答案只用于本地填写。实现了 `vision(op, payload)` 的 JS 提供器还能接手滑块、点选和多帧验证；只会读文字的提供器遇到这几类时转交 AI。
 - 运行时通过 `POST /api/settings {"slots": {...}}` 或侧栏切换，选择持久化到 `settingsFile`，切换本身写入审计（`settings.pointer` / `settings.ocr` / `settings.clipboard`）。
 
 使用说明见 [plugins.md](plugins.md)。
@@ -75,10 +75,11 @@ interface CapabilityProvider<I, O> {
 
 ```text
 detected
-  ├─ text_image -> ocr_running
-  │                  ├─ challenge gone -> resolved_unverified
-  │                  └─ failed/remain -> ai_recovery_required
-  └─ other ----------> ai_recovery_required
+  ├─ text_image (still or animated) ─┐
+  ├─ slider (hold, reveal, drag) ────┼─> ocr_running
+  ├─ click_sequence (ordered clicks) ┘     ├─ challenge gone -> resolved_unverified
+  │                                        └─ failed/remain -> ai_recovery_required
+  └─ interactive -------------------------> ai_recovery_required
                            ├─ AI resolved -> resolved_unverified
                            ├─ retry within budget -> ai_recovery_required
                            └─ budget exhausted -> human_required

@@ -13,3 +13,4 @@ run(python, ['python/generate_ocr_fixture.py']);
 const env = { ...process.env, WAYMARK_PYTHON: python };
 run('npx', ['tsx', 'tests/ocr_smoke.ts'], env);
 run('npx', ['tsx', 'tests/ocr_e2e.ts'], env);
+run('npx', ['tsx', 'tests/challenge_input_e2e.ts'], env);
