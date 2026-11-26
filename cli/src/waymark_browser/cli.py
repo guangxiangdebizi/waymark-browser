@@ -297,6 +297,11 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("prune", help="delete trace entries older than N days (dry run unless --yes)")
     p.add_argument("--days", type=int, required=True)
     p.add_argument("--yes", action="store_true", help="really delete")
+    p = sub.add_parser("cookies", help="export or import cookies (carry logins over from Chrome or another browser)")
+    p.add_argument("action", choices=["export", "import"])
+    p.add_argument("file", nargs="?", help="export: write JSON here (default stdout); import: read a JSON cookie array from here")
+    p.add_argument("--from-cdp", metavar="URL", help="import straight from another Chromium's DevTools endpoint, e.g. http://127.0.0.1:9222")
+    p.add_argument("--domain", action="append", help="only cookies for this domain and its subdomains (repeatable)")
     sub.add_parser("tools", help="list MCP tools exposed by the app")
     p = sub.add_parser("call", help="call any MCP tool with JSON arguments")
     p.add_argument("tool")
@@ -456,6 +461,29 @@ def run(args: argparse.Namespace) -> int:
             verb = "Would remove" if result["dryRun"] else "Removed"
             emit(f"{verb} {result['removed']} entries older than {result['cutoff'][:10]}, {result['snapshotsRemoved']} snapshots and {result['screenshotsRemoved']} screenshots; {result['kept']} entries kept."
                  + ("\nRun again with --yes to delete." if result["dryRun"] else ""), False)
+    elif command == "cookies":
+        arguments: dict = {"action": args.action}
+        if args.domain:
+            arguments["domains"] = args.domain
+        if args.action == "export":
+            result = client.call("cookies", arguments)
+            if args.file:
+                with open(args.file, "w", encoding="utf-8") as handle:
+                    json.dump(result["cookies"], handle, ensure_ascii=False, indent=2)
+                emit(result if as_json else f"Exported {result['count']} cookies to {args.file}", as_json)
+            else:
+                emit(result["cookies"], True)
+        else:
+            if args.from_cdp:
+                arguments["fromCdp"] = args.from_cdp
+            elif args.file:
+                with open(args.file, encoding="utf-8") as handle:
+                    data = json.load(handle)
+                arguments["cookies"] = data.get("cookies", data) if isinstance(data, dict) else data
+            else:
+                raise SystemExit("cookies import needs a JSON file or --from-cdp URL")
+            result = client.call("cookies", arguments)
+            emit(result if as_json else f"Imported {result['imported']} cookies for {', '.join(result['domains']) or 'no domains'}", as_json)
     elif command == "tools":
         tools = client.tools()
         emit(tools if as_json else "\n".join(f"{tool['name']:<14} {tool.get('description', '')}" for tool in tools), as_json)

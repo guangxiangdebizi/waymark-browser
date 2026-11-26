@@ -17,3 +17,13 @@ font = font or ImageFont.load_default()
 draw.text((18, 10), 'A7B2', fill='black', font=font)
 image.save(output)
 print(output)
+
+# An animated GIF that shows one character at a time: no single frame holds the answer.
+frames = []
+for i, ch in enumerate('K9P4'):
+    frame = Image.new('RGB', (220, 70), 'white')
+    ImageDraw.Draw(frame).text((18 + 46 * i, 10), ch, fill='black', font=font)
+    frames.append(frame)
+blink = Path('data/ocr-blink.gif')
+frames[0].save(blink, save_all=True, append_images=frames[1:], duration=300, loop=0)
+print(blink)

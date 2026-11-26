@@ -1,0 +1,38 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Ordered click fixture</title>
+<style>body{font-family:'Microsoft YaHei',sans-serif}.captcha-box{width:340px;margin:40px;padding:8px;border:1px solid #ccc}.prompt-row{display:flex;align-items:center;height:44px}button{margin-top:8px}</style></head><body>
+<!-- The prompt plays its three characters one after another with a pause, never all at once; they exist only as pixels. -->
+<div class="captcha-box" id="box"><div class="prompt-row"><span>请依次点击：</span><canvas id="prompt" width="80" height="40"></canvas></div>
+<canvas id="img" width="320" height="200"></canvas><br><button id="ok">确定</button></div><div id="state"></div>
+<script>
+const all = ['猫', '山', '水', '花', '鸟'], order = ['猫', '山', '水'];
+const spots = [[40, 50], [150, 120], [255, 40], [95, 160], [250, 150]];
+const img = document.getElementById('img').getContext('2d');
+img.fillStyle = '#f3efe6'; img.fillRect(0, 0, 320, 200);
+for (let i = 0; i < 40; i++) { img.strokeStyle = `hsla(${i * 37 % 360},40%,70%,.6)`; img.beginPath(); img.arc(Math.random() * 320, Math.random() * 200, 4 + Math.random() * 10, 0, 7); img.stroke(); }
+img.font = '34px "Microsoft YaHei"'; img.textAlign = 'center'; img.textBaseline = 'middle';
+all.forEach((c, i) => { img.save(); img.translate(...spots[i]); img.rotate((i % 2 ? 1 : -1) * 0.15); img.fillStyle = '#2a2a70'; img.fillText(c, 0, 0); img.restore(); });
+const prompt = document.getElementById('prompt').getContext('2d');
+prompt.font = '28px "Microsoft YaHei"'; prompt.textAlign = 'center'; prompt.textBaseline = 'middle';
+const mode = new URLSearchParams(location.search);
+if (mode.has('dom')) {
+  // The targets spelled out as text.
+  document.querySelector('.prompt-row span').textContent = '请依次点击：' + order.join(' ');
+  document.getElementById('prompt').remove();
+} else if (mode.has('still')) {
+  // All targets at once in one prompt image.
+  document.getElementById('prompt').width = 120; prompt.font = '28px "Microsoft YaHei"'; prompt.textAlign = 'center'; prompt.textBaseline = 'middle';
+  order.forEach((c, i) => { prompt.fillStyle = '#000'; prompt.fillText(c, 20 + i * 40, 21); });
+} else {
+  const steps = [...order.map(c => [c, 550]), [null, 1000]];
+  let step = Math.floor(Math.random() * steps.length);
+  (function play() { const [c, ms] = steps[step]; prompt.clearRect(0, 0, 80, 40); if (c) { prompt.fillStyle = '#000'; prompt.fillText(c, 40, 21); } step = (step + 1) % steps.length; setTimeout(play, ms); })();
+}
+const clicks = [];
+document.getElementById('img').addEventListener('click', e => { const r = e.target.getBoundingClientRect(); clicks.push([e.clientX - r.left, e.clientY - r.top]); });
+document.getElementById('ok').addEventListener('click', () => {
+  const want = order.map(c => spots[all.indexOf(c)]);
+  window.trace = { clicks: clicks.length };
+  if (clicks.length === 3 && want.every((w, i) => Math.hypot(w[0] - clicks[i][0], w[1] - clicks[i][1]) < 22)) { document.getElementById('box').remove(); document.getElementById('state').textContent = 'Verified clicks'; }
+  else { document.getElementById('state').textContent = 'wrong ' + JSON.stringify(clicks); clicks.length = 0; }
+});
+</script></body></html>

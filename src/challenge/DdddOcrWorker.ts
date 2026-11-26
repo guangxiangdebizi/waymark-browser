@@ -8,10 +8,31 @@ import type { CapabilityManifest } from '../capabilities/CapabilityRegistry.js';
 const WARM_IMAGE = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
 
 export interface OcrResult { text: string; probability?: number[] }
-interface Pending { resolve: (value: OcrResult) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }
+interface Pending { resolve: (value: any) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }
+
+export interface Region { x: number; y: number; w: number; h: number }
+/** The worker's multi-frame and geometry operations, beyond reading one still image. */
+export interface VisionOps {
+  /** Load OpenCV (and for clicks the detector) ahead of the first frame, while the pointer travels. */
+  prepare: { in: { kind: string }; out: { ready: boolean } };
+  /** Frames of one image that shows its text piece by piece: merged into one frame, then read. */
+  classify_frames: { in: { frames: string[] }; out: { text: string; keyframes: number } };
+  /** What changed between the frame before a press and the frames while it is held (the gap, often the piece). */
+  reveal: { in: { before: string; frames: string[]; threshold?: number }; out: { width: number; height: number; regions: Array<Region & { area: number }> } };
+  /** Classic slider with a separate piece image: where the piece fits in the background. */
+  slide_match: { in: { piece: string; background: string; simple?: boolean }; out: { target?: number[]; confidence?: number } };
+  /** Ordered click points for "click these in order" challenges; the prompt may be DOM text, a still or a sequence. */
+  click_plan: {
+    in: { frames: string[]; times?: number[]; prompt?: Region; canvas: Region; exclude?: Region; tokens?: string[] };
+    out: { points: Array<{ x: number; y: number }>; method: string; items: number; textMatched?: number; candidates?: number; cycled?: boolean; reason?: string };
+  };
+}
+/** A challenge provider that can do more than read text; the built-in ddddocr worker is one. */
+export interface ChallengeVision { vision<K extends keyof VisionOps>(op: K, payload: VisionOps[K]['in']): Promise<VisionOps[K]['out']> }
+export const hasVision = (provider: unknown): provider is ChallengeVision => typeof (provider as ChallengeVision)?.vision === 'function';
 
 export class DdddOcrWorker {
-  readonly manifest: CapabilityManifest = { id: 'challenge.ocr.ddddocr', version: '0.2.0', kind: 'challenge', runtime: 'python', dataEgress: 'local-only', description: 'Persistent local ddddocr worker; answers never enter the model context.' };
+  readonly manifest: CapabilityManifest = { id: 'challenge.ocr.ddddocr', version: '0.3.0', kind: 'challenge', runtime: 'python', dataEgress: 'local-only', description: 'Persistent local ddddocr worker for text, multi-frame, slider and ordered-click challenges; answers never enter the model context.' };
   private child?: ChildProcessWithoutNullStreams;
   private pending = new Map<string, Pending>();
   private stdout = '';
@@ -55,10 +76,17 @@ export class DdddOcrWorker {
     return await this.send({ image: image.toString('base64') }, this.options.timeoutMs);
   }
 
-  private send(payload: Record<string, unknown>, timeoutMs: number): Promise<OcrResult> {
+  async vision<K extends keyof VisionOps>(op: K, payload: VisionOps[K]['in']): Promise<VisionOps[K]['out']> {
+    const images = Object.values(payload).flatMap(v => Array.isArray(v) ? v : [v]).filter((v): v is string => typeof v === 'string' && v.length > 64);
+    if (images.some(image => image.length * 0.75 > this.options.maxImageBytes)) throw new Error('Challenge image exceeds configured byte limit');
+    this.armIdle();
+    return await this.send<VisionOps[K]['out']>({ op, ...payload }, this.options.timeoutMs);
+  }
+
+  private send<T = OcrResult>(payload: Record<string, unknown>, timeoutMs: number): Promise<T> {
     const child = this.ensureWorker();
     const id = randomUUID();
-    return new Promise<OcrResult>((resolvePromise, reject) => {
+    return new Promise<T>((resolvePromise, reject) => {
       const timer = setTimeout(() => {
         const error = new Error('OCR worker timed out');
         this.rejectAll(error);
@@ -100,10 +128,10 @@ export class DdddOcrWorker {
       this.stdout = this.stdout.slice(newline + 1);
       if (line) {
         try {
-          const response = JSON.parse(line) as { id?: string; text?: string; error?: string };
-          if (response.id && this.pending.has(response.id)) {
-            if (response.error) this.fail(response.id, new Error(response.error));
-            else this.succeed(response.id, { text: response.text ?? '' });
+          const { id, error, ...response } = JSON.parse(line) as { id?: string; text?: string; error?: string };
+          if (id && this.pending.has(id)) {
+            if (error) this.fail(id, new Error(error));
+            else this.succeed(id, 'text' in response ? { ...response, text: response.text ?? '' } : response);
           }
         } catch { this.rejectAll(new Error('Invalid OCR worker response')); this.stopWorker(); }
       }
@@ -111,7 +139,7 @@ export class DdddOcrWorker {
     }
   }
 
-  private succeed(id: string, result: OcrResult): void {
+  private succeed(id: string, result: unknown): void {
     const pending = this.pending.get(id);
     if (!pending) return;
     clearTimeout(pending.timer);

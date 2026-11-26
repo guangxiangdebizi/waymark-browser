@@ -19,6 +19,7 @@ import { currentActor, type Actor } from '../audit/Actor.js';
 export interface InputMeter { pointerPaths: number; clicks: number; keystrokes: number; pastes: number; pacedMs: number }
 const meters = new AsyncLocalStorage<InputMeter>();
 const newMeter = (): InputMeter => ({ pointerPaths: 0, clicks: 0, keystrokes: 0, pastes: 0, pacedMs: 0 });
+import { domainMatches, readCdpCookies, toPlaywright, type CookieRecord } from './Cookies.js';
 
 export interface ActInput {
   page: number;
@@ -238,6 +239,24 @@ export class BrowserRuntime {
     await this.capabilities.close();
   }
 
+  /** Export or import cookies. Values never go to the audit ledger, only counts and domains. */
+  async cookies(action: 'export' | 'import', options: { domains?: string[]; cookies?: CookieRecord[]; fromCdp?: string } = {}): Promise<unknown> {
+    await this.launch();
+    const context = this.context!;
+    if (action === 'export') {
+      const list = (await context.cookies()).filter(cookie => domainMatches(cookie.domain, options.domains));
+      this.audit.record({ action: 'cookies.export', status: 'success', detail: { count: list.length, domains: [...new Set(list.map(c => c.domain))] } });
+      return { count: list.length, cookies: list };
+    }
+    const source = options.cookies ?? (options.fromCdp ? await readCdpCookies(options.fromCdp) : undefined);
+    if (!source) throw new Error('import needs cookies (a JSON array) or fromCdp (a DevTools endpoint such as http://127.0.0.1:9222)');
+    const list = source.filter(cookie => cookie?.name && cookie.domain && domainMatches(cookie.domain, options.domains)).map(toPlaywright);
+    if (list.length) await context.addCookies(list);
+    const domains = [...new Set(list.map(c => c.domain))];
+    this.audit.record({ action: 'cookies.import', status: 'success', detail: { count: list.length, domains, from: options.fromCdp ? 'cdp' : 'json' } });
+    return { imported: list.length, domains };
+  }
+
   async tabs(action: 'list' | 'new' | 'close' | 'active', pageId?: number, url?: string): Promise<unknown> {
     await this.launch();
     if (action !== 'list' && this.paused) throw new Error('The user has paused automation in Waymark; wait for the user to resume before retrying.');
@@ -371,10 +390,19 @@ export class BrowserRuntime {
       window.__agentRefSeq = window.__agentRefSeq || 0;
       const items = [];
       for (const el of Array.from(document.querySelectorAll(selector))) {
-        if (!visible(el)) continue;
         if (el.type === 'hidden') continue;
-        let ref = el.getAttribute('data-agent-ref');
-        if (!ref) { ref = 'e' + (++window.__agentRefSeq); el.setAttribute('data-agent-ref', ref); }
+        // Styled controls hide the real input and draw their own look. A checkbox/radio is clicked through its visible label;
+        // a transparent submit/button laid over a visible button face still takes the click itself.
+        let target = el;
+        if (!visible(el)) {
+          const input = el instanceof HTMLInputElement ? el : null;
+          const label = input && ['checkbox', 'radio'].includes(input.type) ? ((input.labels && input.labels[0]) || input.closest('label')) : null;
+          const r = el.getBoundingClientRect();
+          if (label && visible(label)) target = label;
+          else if (!(input && ['submit', 'button'].includes(input.type) && r.width > 1 && r.height > 1 && el.parentElement && visible(el.parentElement))) continue;
+        }
+        let ref = target.getAttribute('data-agent-ref');
+        if (!ref) { ref = 'e' + (++window.__agentRefSeq); target.setAttribute('data-agent-ref', ref); }
         const role = el.getAttribute('role') || (el instanceof HTMLInputElement ? el.type : el.tagName.toLowerCase());
         items.push({ ref, role, name: nameOf(el), state: stateOf(el) });
       }

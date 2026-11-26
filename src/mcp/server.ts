@@ -148,6 +148,15 @@ export function createMcpServer(runtime: BrowserRuntime, challenges: ChallengeBr
     return { matched };
   }));
 
+  server.registerTool('cookies', {
+    description: 'Export or import browser cookies so logins carry over between browsers. export returns cookies (optionally only for domains). import takes cookies (CDP, Playwright or Electron cookie objects) or fromCdp, the DevTools endpoint of another Chromium-based browser (e.g. http://127.0.0.1:9222), and copies its cookies in, optionally only for domains. Session cookies are kept across Waymark restarts.',
+    inputSchema: {
+      action: z.enum(['export', 'import']), domains: z.array(z.string()).optional(),
+      cookies: z.array(z.object({ name: z.string(), value: z.string(), domain: z.string() }).passthrough()).optional(),
+      fromCdp: z.string().url().optional()
+    }
+  }, wrap('cookies', async args => runtime.cookies(args.action, { domains: args.domains, cookies: args.cookies, fromCdp: args.fromCdp })));
+
   server.registerTool('capabilities', {
     description: 'List registered local model and action providers with version and data-egress metadata.',
     inputSchema: {}

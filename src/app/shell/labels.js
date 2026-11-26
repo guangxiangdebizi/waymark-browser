@@ -35,6 +35,16 @@
   const CHALLENGE_TONE = { detected: 'info', ocr_running: 'info', ai_recovery_required: 'warn', human_required: 'warn', human_takeover: 'info', resolved_unverified: 'ok', failed: 'bad', cancelled: '' };
   const CHALLENGE_DETAIL = {
     'Generic text/image challenge detected': t("检测到文字图片验证码"),
+    'Slider challenge detected': t("检测到滑块验证"),
+    'Ordered-click challenge detected': t("检测到按顺序点选验证"),
+    'Local ddddocr slider attempt started': t("本地 ddddocr 正在处理滑块"),
+    'Local ddddocr ordered-click attempt started': t("本地 ddddocr 正在处理点选"),
+    'Challenge disappeared after OCR slider drag; verify the business result': t("滑块拖动后验证消失，请确认业务结果"),
+    'Challenge disappeared after OCR ordered clicks; verify the business result': t("按顺序点选后验证消失，请确认业务结果"),
+    'Challenge remains after the local slider attempt': t("滑块尝试后验证仍在，转交 AI"),
+    'Challenge remains after the local ordered-click attempt': t("点选尝试后验证仍在，转交 AI"),
+    'Automatic solving disabled': t("未开启自动处理，转交 AI"),
+    'Local attempt budget used up': t("本地尝试次数已用完，转交 AI"),
     'Interactive or unrecognized challenge signal detected': t("检测到交互式或无法识别的验证"),
     'Local ddddocr attempt started': t("本地 ddddocr 正在识别"),
     'OCR returned an empty answer': t("OCR 没有识别出内容，转交 AI"),
@@ -53,8 +63,8 @@
     'Cancelled': t("已取消")
   };
   const challengeDetail = text => CHALLENGE_DETAIL[text]
-    || String(text ?? '').replace(/^OCR unavailable or failed: /, t("本地 OCR 不可用或识别失败："));
-  const KIND_LABEL = { text_image: t("文字图片验证码"), interactive: t("交互式验证"), unknown: t("未知类型验证") };
+    || String(text ?? '').replace(/^OCR unavailable or failed: /, t("本地 OCR 不可用或识别失败：")).replace(/^Local [\w-]+ attempt failed: /, t("本地处理失败："));
+  const KIND_LABEL = { text_image: t("文字图片验证码"), slider: t("滑块验证"), click_sequence: t("按顺序点选验证"), interactive: t("交互式验证"), unknown: t("未知类型验证") };
   const STATUS_LABEL = { success: t("成功"), failure: t("失败"), started: t("进行中"), info: t("记录") };
   const ACT_ACTIONS = ['click', 'hover', 'fill', 'select', 'type', 'paste', 'copy', 'press', 'scroll', 'navigate', 'tabs.new', 'tabs.close', 'snapshot', 'read'];
 
@@ -120,7 +130,7 @@
       default:
         if (event.action.startsWith('challenge.')) {
           const step = event.action.slice(10);
-          const steps = { detected: t("发现验证码"), ocr_filled: t("OCR 已填入答案"), automation_blocked: t("验证未完成，拦下了 AI 操作"), detection_deferred: t("页面跳转中，稍后再检测") };
+          const steps = { detected: t("发现验证码"), input: t("已整理验证画面给 ddddocr"), ocr_filled: t("OCR 已填入答案"), automation_blocked: t("验证未完成，拦下了 AI 操作"), detection_deferred: t("页面跳转中，稍后再检测") };
           return { icon: 'shield', what: t("验证挑战 · ") + (CHALLENGE_LABEL[step] || steps[step] || step) };
         }
         return { icon: 'globe', what: event.action };
