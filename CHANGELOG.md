@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — agent provenance, insights, a fuller CLI and a lighter app
+## v0.6.0 — agent provenance, insights, a fuller CLI and a lighter app
 
 - **Every step knows its agent.** Ledger entries record the actor: agent (Claude Code, Codex, WorkBuddy, CodeBuddy, Cursor, Gemini CLI, a declared name, `human`, or `unknown`), how it was identified (declared, MCP clientInfo, the agent's environment, User-Agent, terminal, local UI), its session, window and the tool call. Nothing is guessed. Clients that initialize get their own MCP session, so two windows of one agent stay apart; stateless callers still work and can name themselves with `X-Waymark-*` headers or `?agent=` on the MCP URL. Tabs an agent opened carry its name in the tab strip. See [docs/provenance.md](docs/provenance.md).
 - **Agent manager** (Ctrl+Shift+M, `/agents`, `waymark manager`): agents → sessions → tabs → every step, with the tool call, timing, errors, a screenshot of the page after each step and the snapshot it acted on. Opens in its own window that agents cannot reach.

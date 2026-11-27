@@ -32,7 +32,7 @@ export interface McpOptions {
 }
 
 export function createMcpServer(runtime: BrowserRuntime, challenges: ChallengeBroker, options: McpOptions = {}): McpServer {
-  const server = new McpServer({ name: 'waymark', version: '0.5.0' });
+  const server = new McpServer({ name: 'waymark', version: '0.6.0' });
   const identities = options.identities ?? new IdentityRegistry();
   const actorFor = (extra?: RequestExtra): Actor => identities.resolve({ headers: extra?.requestInfo?.headers, url: extra?.requestInfo?.url, sessionId: extra?.sessionId });
   // Every tool call runs as its actor: ledger entries it writes carry agent, session and call id, and one mcp.call
