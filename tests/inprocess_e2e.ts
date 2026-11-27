@@ -8,7 +8,10 @@ import { join, resolve } from 'node:path';
 import electronPath from 'electron';
 
 const directory = mkdtempSync(join(tmpdir(), 'waymark-inprocess-'));
-const fixture = createServer((_req, res) => { res.setHeader('content-type', 'text/html; charset=utf-8'); res.end(readFileSync('tests/fixtures/basic.html', 'utf8')); });
+const fixture = createServer((req, res) => {
+  res.setHeader('content-type', 'text/html; charset=utf-8');
+  res.end(req.url === '/webdriver' ? '<p id="out"></p><script>out.textContent = `webdriver=${navigator.webdriver}`</script>' : readFileSync('tests/fixtures/basic.html', 'utf8'));
+});
 await new Promise<void>(done => fixture.listen(0, '127.0.0.1', done));
 const site = `http://127.0.0.1:${(fixture.address() as { port: number }).port}/`;
 const probe = createServer();
@@ -54,6 +57,8 @@ try {
   assert.ok(shot.bytes > 1000);
   const tabs = await call('tabs', { action: 'list' });
   assert.ok(tabs.find((t: any) => t.id === tab.id).openedBy.agent === 'codex');
+  await call('navigate', { page: tab.id, action: 'url', url: site + 'webdriver' });
+  assert.match((await call('read', { page: tab.id })).text, /webdriver=false/, 'pages driven over DevTools must not report navigator.webdriver');
   const tree = await (await fetch(base + '/api/agents?days=1')).json();
   assert.deepEqual(tree.agents.map((a: any) => a.agent), ['codex']);
   const memory = await (await fetch(base + '/api/memory')).json();

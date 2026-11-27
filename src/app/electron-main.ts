@@ -20,6 +20,10 @@ app.setPath('userData', fromRoot(config.browser.userDataDir));
 app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
 app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
+// Once a DevTools client drives the pages Chromium reports navigator.webdriver=true, which sites read as a bot:
+// Google sign-in answers "This browser or app may not be secure" (issue #2). Pages here are shared with people and
+// keep the value a normal browser reports.
+app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled');
 // The network service runs as a thread of the browser process instead of a process of its own (about 13-20 MB less,
 // no effect on page loads). browser.memory.networkServiceInProcess: false restores the separate process.
 if (config.browser.memory?.networkServiceInProcess !== false) app.commandLine.appendSwitch('enable-features', 'NetworkServiceInProcess2');
