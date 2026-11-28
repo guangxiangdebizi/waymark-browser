@@ -162,6 +162,25 @@ def build(app_dir: Path) -> None:
     env.pop("NODE_ENV", None)
     run([npm, "ci", "--include=dev", "--no-audit", "--no-fund"], app_dir, env)
     run([npm, "run", "build"], app_dir, env)
+    ensure_electron(app_dir, env)
+
+
+def ensure_electron(directory: Path, env: dict) -> None:
+    if electron_binary(directory):
+        return
+    package = directory / "node_modules" / "electron"
+    node = tool("node")
+    hint = (f"Electron executable missing under {package / 'dist'}. "
+            f'From "{package}", run: node install.js. If the download is blocked, '
+            "set ELECTRON_MIRROR to a trusted mirror and retry python -m waymark_browser setup.")
+    if not node or not (package / "install.js").is_file():
+        raise SystemExit(f"Cannot run the local Electron installer. {hint}")
+    try:
+        run([node, "install.js"], package, env)
+    except (OSError, SystemExit) as error:
+        raise SystemExit(f"{error}\n{hint}") from error
+    if not electron_binary(directory):
+        raise SystemExit(hint)
 
 
 # ---------------------------------------------------------------- start / stop
@@ -189,10 +208,13 @@ def electron_binary(directory: Path) -> Path | None:
     package = directory / "node_modules" / "electron"
     try:
         name = (package / "path.txt").read_text(encoding="utf-8").strip()
-    except OSError:
+    except (OSError, UnicodeError):
         return None
-    binary = package / "dist" / name
-    return binary if binary.exists() else None
+    relative = Path(name)
+    if not name or relative.anchor or ".." in relative.parts:
+        return None
+    binary = package / "dist" / relative
+    return binary if binary.is_file() and os.access(binary, os.X_OK) else None
 
 
 def launch_command(directory: Path, node: str, env: dict) -> list:

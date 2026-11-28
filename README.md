@@ -105,6 +105,8 @@ npm ci && npm run app
 
 On a headless Linux box, wrap it: `xvfb-run -a waymark start --foreground`.
 
+**Windows:** If Smart App Control blocks pip's `waymark.exe`, use the Python interpreter that installed the package: `python -m waymark_browser setup`, then `python -m waymark_browser start`. This works for every subcommand without changing the security policy. If Electron downloads are blocked, set `$env:ELECTRON_MIRROR` to a trusted Electron mirror in PowerShell before running setup.
+
 ### Connect your agent
 
 ```bash
@@ -118,9 +120,16 @@ claude mcp add --transport http waymark http://127.0.0.1:9510/mcp
 url = "http://127.0.0.1:9510/mcp"
 ```
 
+For stdio-only clients:
+
 ```json
-// stdio-only clients
 { "mcpServers": { "waymark": { "command": "waymark", "args": ["mcp", "--autostart"] } } }
+```
+
+For stdio on Windows, use the module entry point if the launcher is blocked. Replace `python` with the interpreter's full path if the MCP client uses a different environment:
+
+```json
+{ "mcpServers": { "waymark": { "command": "python", "args": ["-m", "waymark_browser", "mcp", "--autostart"] } } }
 ```
 
 ### Or drive it from the terminal

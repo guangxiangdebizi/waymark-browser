@@ -96,6 +96,8 @@ git clone https://github.com/guangxiangdebizi/waymark-browser && cd waymark-brow
 npm ci && npm run app
 ```
 
+**Windows：** 如果智能应用控制拦截了 pip 生成的 `waymark.exe`，请使用安装该包的 Python，依次运行 `python -m waymark_browser setup` 和 `python -m waymark_browser start`。所有子命令都支持这种写法，无需关闭安全策略。若 Electron 下载受阻，可在 PowerShell 中将 `$env:ELECTRON_MIRROR` 设为可信的 Electron 镜像地址，再运行 setup。
+
 ### 接入 AI
 
 ```bash
@@ -109,6 +111,12 @@ url = "http://127.0.0.1:9510/mcp"
 ```
 
 只支持 stdio 的客户端：`{"command": "waymark", "args": ["mcp", "--autostart"]}`。
+
+Windows 启动器被拦截时，使用下面的 stdio 配置。如果客户端使用不同的 Python 环境，将 `python` 替换为安装该包的解释器完整路径。
+
+```json
+{ "mcpServers": { "waymark": { "command": "python", "args": ["-m", "waymark_browser", "mcp", "--autostart"] } } }
+```
 
 ### 命令行直接操作
 

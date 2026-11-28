@@ -23,6 +23,8 @@ waymark doctor       # check Node.js, the install and the connection
 
 On a Linux server without a display, use `xvfb-run -a waymark start --foreground`.
 
+**Windows:** If Smart App Control blocks pip's `waymark.exe`, use the Python interpreter that installed the package: `python -m waymark_browser setup`, then `python -m waymark_browser start`. This works for every subcommand without disabling the policy. If the Electron download is blocked, set `$env:ELECTRON_MIRROR` to a trusted Electron mirror in PowerShell before running setup.
+
 ## Connect an AI agent
 
 Claude Code (HTTP):
@@ -42,6 +44,12 @@ Clients that only support stdio:
 
 ```json
 { "mcpServers": { "waymark": { "command": "waymark", "args": ["mcp", "--autostart"] } } }
+```
+
+Windows stdio alternative (replace `python` with the full interpreter path if needed):
+
+```json
+{ "mcpServers": { "waymark": { "command": "python", "args": ["-m", "waymark_browser", "mcp", "--autostart"] } } }
 ```
 
 ## Drive the browser from the terminal
