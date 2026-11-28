@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 from datetime import datetime
 from typing import Any
@@ -330,8 +331,12 @@ def run(args: argparse.Namespace) -> int:
         headers = explicit.headers() if explicit.agent or explicit.session or explicit.window else {}
         headers.pop("X-Waymark-Client", None)
         client = Client(args.url, headers=headers, stateless=False)
-        on_down = (lambda: app.start(None, None, False, 120, args.url) == 0) if args.autostart else None
-        return bridge.serve(client, on_down=on_down)
+        def autostart() -> bool:
+            # Keep startup and any child build tools off the JSON-RPC stdout stream.
+            command = [sys.executable, "-m", "waymark_browser", "start", "--url", client.url]
+            return subprocess.run(command, stdin=subprocess.DEVNULL, stdout=sys.stderr).returncode == 0
+
+        return bridge.serve(client, on_down=autostart if args.autostart else None)
     client = Client(args.url, headers=who.headers())
     if command == "status":
         status = client.api("status")

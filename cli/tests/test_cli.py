@@ -3,6 +3,7 @@ import io
 import json
 import threading
 import unittest
+from unittest.mock import patch
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from waymark_browser import bridge, cli
@@ -129,6 +130,14 @@ class CliTests(unittest.TestCase):
             self.run_cli("snapshot", "3")
         with self.assertRaises(SystemExit):
             cli.parse_fields(["e1"])
+
+    def test_autostart_keeps_child_output_off_protocol_stream(self):
+        with patch.object(bridge, "serve", side_effect=lambda client, on_down: 0 if on_down() else 1), \
+                patch.object(cli.subprocess, "run") as run:
+            run.return_value.returncode = 0
+            self.assertEqual(cli.main(["mcp", "--url", self.url, "--autostart"]), 0)
+            run.assert_called_once_with([cli.sys.executable, "-m", "waymark_browser", "start", "--url", self.url],
+                                        stdin=cli.subprocess.DEVNULL, stdout=cli.sys.stderr)
 
     def test_stdio_bridge_forwards_requests_and_notifications(self):
         stdin = io.StringIO("\n".join([
