@@ -25,6 +25,9 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm test
+      - name: External protocol permissions in Electron
+        if: runner.os == 'Windows'
+        run: npx tsx tests/external_protocol_e2e.ts
       - name: End-to-end against the real Electron app
         if: runner.os == 'Linux'
         run: |

@@ -61,6 +61,9 @@ try {
   assert.match((await call('read', { page: tab.id })).text, /webdriver=false/, 'pages driven over DevTools must not report navigator.webdriver');
   const tree = await (await fetch(base + '/api/agents?days=1')).json();
   assert.deepEqual(tree.agents.map((a: any) => a.agent), ['codex']);
+  const external = await call('tabs', { action: 'new', url: 'waymark-no-handler://cli-open' });
+  assert.ok(external.id, 'an unregistered external target does not fail the CLI open operation');
+  await call('navigate', { page: external.id, action: 'url', url: 'waymark-no-handler://cli-navigate' });
   const memory = await (await fetch(base + '/api/memory')).json();
   assert.equal(memory.pid, child.pid, 'the runtime runs inside the Electron main process');
   console.log(`IN-PROCESS E2E PASS: runtime in Electron main (pid ${memory.pid}, heap ${memory.heapUsedMB} MB), whole flow ${Date.now() - started} ms`);

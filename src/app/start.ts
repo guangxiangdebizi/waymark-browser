@@ -16,6 +16,7 @@ export async function startWaymark() {
   const shell = <T>(name: string, ...args: unknown[]) => electronApp.evaluate(async (_electron, value) => (globalThis as any).agentShell[value.name](...value.args), { name, args }) as Promise<T>;
   const bridge: ShellBridge = {
     createTab: token => shell('createTab', token, 'about:blank'),
+    openDirectExternal: (tab, url) => shell('openDirectExternal', tab, url),
     activate: id => shell('activate', id),
     close: id => shell('close', id),
     setOwner: (id, owner) => shell('setOwner', id, owner),

@@ -1,4 +1,5 @@
 import type { BrowserContext, Page } from 'playwright-core';
+import { externalTarget } from './external-protocol.js';
 import { randomUUID } from 'node:crypto';
 import type { AppConfig } from '../types.js';
 import { AuditLog } from '../audit/AuditLog.js';
@@ -13,6 +14,7 @@ import { runAs, SYSTEM_ACTOR } from '../audit/Actor.js';
 /** What the runtime needs from the desktop shell (electron-main.ts's agentShell), however it reaches it. */
 export interface ShellBridge {
   createTab(token: string): Promise<number>;
+  openDirectExternal(tab: number | string, url: string): Promise<void>;
   activate(id: number): Promise<void>;
   close(id: number): Promise<void>;
   setOwner(id: number, owner: 'agent' | 'user'): Promise<void>;
@@ -38,6 +40,18 @@ export async function bootRuntime(config: AppConfig, context: BrowserContext, br
       const page = await runtime.findPageByUrl(token);
       pageToWebContents.set(page, id);
       return page;
+    },
+    navigate: async (page, url) => {
+      if (!externalTarget(url)) return false;
+      let tab: number | string | undefined = pageToWebContents.get(page);
+      if (tab === undefined) {
+        // Tabs opened in the address bar were not created by the runtime factory.
+        const cdp = await context.newCDPSession(page);
+        try { tab = (await cdp.send('Target.getTargetInfo')).targetInfo.targetId; }
+        finally { await cdp.detach(); }
+      }
+      await bridge.openDirectExternal(tab, url);
+      return true;
     },
     activate: async page => { const id = pageToWebContents.get(page); if (id) await bridge.activate(id); },
     close: async page => { const id = pageToWebContents.get(page); if (id) await bridge.close(id); }

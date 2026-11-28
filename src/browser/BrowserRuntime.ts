@@ -44,6 +44,7 @@ export class BrowserRuntime {
   private nextPageId = 1;
   private driver?: RuntimeDriver;
   private pageFactory?: (url: string) => Promise<Page>;
+  private handleNavigation?: (page: Page, url: string) => Promise<boolean>;
   private pageActivator?: (page: Page) => Promise<void>;
   private pageCloser?: (page: Page) => Promise<void>;
   private pageFilter: (page: Page) => boolean = () => true;
@@ -201,8 +202,9 @@ export class BrowserRuntime {
     return Math.round(ms);
   }
 
-  setPageHooks(hooks: { factory?: (url: string) => Promise<Page>; activate?: (page: Page) => Promise<void>; close?: (page: Page) => Promise<void>; filter?: (page: Page) => boolean }): void {
+  setPageHooks(hooks: { factory?: (url: string) => Promise<Page>; navigate?: (page: Page, url: string) => Promise<boolean>; activate?: (page: Page) => Promise<void>; close?: (page: Page) => Promise<void>; filter?: (page: Page) => boolean }): void {
     this.pageFactory = hooks.factory;
+    this.handleNavigation = hooks.navigate;
     this.pageActivator = hooks.activate;
     this.pageCloser = hooks.close;
     if (hooks.filter) this.pageFilter = hooks.filter;
@@ -304,7 +306,7 @@ export class BrowserRuntime {
     const start = Date.now();
     let shownLines: number | undefined;
     try {
-      if (action === 'url') { if (!url) throw new Error('url is required'); await page.goto(url, { waitUntil: 'domcontentloaded' }); }
+      if (action === 'url') { if (!url) throw new Error('url is required'); await this.goto(page, url); }
       else if (action === 'back') await page.goBack({ waitUntil: 'domcontentloaded' });
       else if (action === 'forward') await page.goForward({ waitUntil: 'domcontentloaded' });
       else await page.reload({ waitUntil: 'domcontentloaded' });
@@ -703,12 +705,16 @@ export class BrowserRuntime {
   async getPage(pageId: number): Promise<Page> { await this.launch(); return this.page(pageId); }
   lastSuccessfulActionId(): string | undefined { return this.audit.list(20).find(e => e.status === 'success' && e.pageId)?.id; }
 
+  private async goto(page: Page, url: string): Promise<void> {
+    if (!await this.handleNavigation?.(page, url)) await page.goto(url, { waitUntil: 'domcontentloaded' });
+  }
+
   private async newPage(url: string): Promise<PageSummary> {
     const context = this.context!;
     const page = this.pageFactory ? await this.pageFactory('about:blank') : await context.newPage();
     if (this.config.browser.automationViewport) await page.setViewportSize(this.config.browser.automationViewport);
     const id = this.register(page);
-    await page.goto(url, { waitUntil: 'domcontentloaded' });
+    await this.goto(page, url);
     this.activePage = id;
     return { id, url: page.url(), title: await page.title(), active: true };
   }

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, WebContentsView, ipcMain, Menu, clipboard, nativeTheme, session, type WebContents, type Input, type MenuItemConstructorOptions } from 'electron';
+import { app, BrowserWindow, WebContentsView, ipcMain, Menu, clipboard, nativeTheme, session, webContents, type WebContents, type Input, type MenuItemConstructorOptions } from 'electron';
 import { readFileSync, writeFileSync, renameSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import v8 from 'node:v8';
@@ -6,6 +6,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadConfig, fromRoot } from '../config.js';
 import { createTranslator } from '../i18n.js';
+import { ExternalNavigation, externalTarget } from './external-protocol.js';
 import { cookieUrl, restorable, type CookieRecord, type SessionCookieFile } from '../browser/Cookies.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -45,7 +46,7 @@ const TOP = 84;
 const PANEL_WIDTH = 380;
 
 type Owner = 'agent' | 'user';
-interface TabState { view: WebContentsView; owner: Owner; favicon?: string; loading: boolean; agent?: string }
+interface TabState { view: WebContentsView; external: ExternalNavigation; owner: Owner; favicon?: string; loading: boolean; agent?: string }
 
 let shell: BrowserWindow;
 let activeId = 0;
@@ -119,12 +120,14 @@ function createTab(token: string, url = 'about:blank', owner: Owner = 'agent', b
   const view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, spellcheck: false, backgroundThrottling: false } });
   const contents = view.webContents;
   const id = contents.id;
-  const state: TabState = { view, owner, loading: true };
+  const state: TabState = { view, external: new ExternalNavigation(), owner, loading: true };
   tabs.set(id, state);
   shell.contentView.addChildView(view);
   view.setVisible(false);
   layout();
-  void contents.loadURL(url === 'about:blank' ? `about:blank#${token}` : url).catch(() => undefined);
+  contents.on('input-event', (_event, input) => state.external.input(input.type));
+  contents.on('will-frame-navigate', event => state.external.navigation(event.url, false));
+  contents.on('will-redirect', event => state.external.navigation(event.url, false));
   contents.on('page-title-updated', event => { event.preventDefault(); publish(); });
   contents.on('page-favicon-updated', (_event, icons) => { state.favicon = icons[0]; publish(); });
   contents.on('did-start-loading', () => { state.loading = true; publish(); });
@@ -140,16 +143,34 @@ function createTab(token: string, url = 'about:blank', owner: Owner = 'agent', b
     if (activeId) activate(activeId); else publish();
   });
   contents.setWindowOpenHandler(({ url: target, disposition }) => {
+    if (externalTarget(target)) return { action: 'deny' };
     createTab(randomUUID(), target, owner, disposition === 'background-tab');
     return { action: 'deny' };
   });
+  void loadDirect(state, url === 'about:blank' ? `about:blank#${token}` : url).catch(() => undefined);
   if (!background || !activeId) activate(id); else publish();
   return id;
 }
 
+async function loadDirect(state: TabState, url: string): Promise<void> {
+  state.external.navigation(url, true);
+  await state.view.webContents.loadURL(url);
+}
+
+async function openDirectExternal(tab: number | string, url: string): Promise<void> {
+  const id = typeof tab === 'number' ? tab : webContents.fromDevToolsTargetId(tab)?.id;
+  const state = id && tabs.get(id);
+  if (!state || !externalTarget(url)) throw new Error('Invalid external navigation');
+  try { await loadDirect(state, url); } catch (error) {
+    // An external handoff has no document to commit, including when permission is denied.
+    const code = (error as { code?: string }).code;
+    if (code !== 'ERR_ABORTED' && code !== 'ERR_FAILED') throw error;
+  }
+}
+
 function navigate(id: number, url: string): void {
   const state = tabs.get(id);
-  if (state && url.trim()) void state.view.webContents.loadURL(normalize(url)).catch(() => undefined);
+  if (state && url.trim()) void loadDirect(state, normalize(url)).catch(() => undefined);
 }
 
 function history(id: number, action: 'back' | 'forward' | 'reload' | 'stop' | 'home'): void {
@@ -313,6 +334,11 @@ function keepCookies(): void {
 }
 
 app.whenReady().then(async () => {
+  session.defaultSession.setPermissionRequestHandler((contents, permission, callback, details) => {
+    if (permission !== 'openExternal') { callback(true); return; }
+    const url = 'externalURL' in details ? details.externalURL : undefined;
+    callback(Boolean(contents && url && tabs.get(contents.id)?.external.consume(url, u => app.getApplicationNameForProtocol(u))));
+  });
   if (config.browser.persistSessionCookies !== false) {
     await restoreSessionCookies().catch(() => undefined);
     keepCookies();
@@ -405,7 +431,7 @@ function openWindow(kind: 'agents' | 'insights', query = ''): boolean {
 
 ipcMain.handle('window:open', (_event, kind: string) => openWindow(kind === 'insights' ? 'insights' : 'agents'));
 
-(globalThis as any).agentShell = { createTab, activate, close, navigate, setOwner, setAgent, openWindow };
+(globalThis as any).agentShell = { createTab, activate, close, navigate, openDirectExternal, setOwner, setAgent, openWindow };
 
 let runtimeHandle: { shutdown(): Promise<void> } | undefined;
 async function startRuntime(): Promise<void> {

@@ -25,6 +25,7 @@ export async function startInProcess(config: AppConfig, userData: string, shell:
   const call = async <T>(name: string, ...args: unknown[]) => await shell[name](...args) as T;
   const bridge: ShellBridge = {
     createTab: token => call('createTab', token, 'about:blank'),
+    openDirectExternal: (tab, url) => call('openDirectExternal', tab, url),
     activate: id => call('activate', id),
     close: id => call('close', id),
     setOwner: (id, owner) => call('setOwner', id, owner),
